@@ -1,0 +1,32 @@
+{
+  "packages": [
+    "jdk17@latest",
+    "gradle@latest",
+    "git@latest",
+    "android-tools@latest"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'MNN Android SDK Development Environment'",
+      "echo 'Java version:'",
+      "java -version",
+      "echo ''",
+      "echo 'Gradle version:'",
+      "gradle --version | head -n 3",
+      "echo ''",
+      "echo 'Environment ready! Run ./gradlew tasks to see available tasks.'"
+    ],
+    "scripts": {
+      "build": "gradle build",
+      "clean": "gradle clean",
+      "test": "gradle test",
+      "assemble-sdk": "gradle :mnn-sdk:assembleRelease",
+      "install-sample": "gradle :sample:installDebug"
+    }
+  },
+  "env": {
+    "ANDROID_HOME": "$HOME/Android/Sdk",
+    "ANDROID_SDK_ROOT": "$HOME/Android/Sdk",
+    "JAVA_HOME": "$DEVBOX_PACKAGES_DIR/jdk17"
+  }
+}
