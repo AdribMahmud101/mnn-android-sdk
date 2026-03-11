@@ -17,38 +17,29 @@ class MNNModel internal constructor(private val nativeHandle: Long) {
      */
     fun createInterpreter(config: MNNConfig = MNNConfig()): MNNInterpreter {
         checkNotClosed()
-        val interpreterHandle = nativeCreateInterpreter(
-            nativeHandle,
-            config.numThreads,
-            config.forwardType,
-            config.precision,
-            config.power,
-            config.memory
-        )
-        if (interpreterHandle == 0L) {
-            throw MNNException("Failed to create interpreter")
-        }
-        return MNNInterpreter(interpreterHandle)
+        return MNNInterpreter(nativeHandle, config)
     }
     
     /**
      * Get model input tensor names.
      *
-     * @return List of input tensor names
+     * @return List of input tensor names (currently returns empty list)
      */
     fun getInputNames(): List<String> {
         checkNotClosed()
-        return nativeGetInputNames(nativeHandle).toList()
+        // TODO: Implement in JNI
+        return emptyList()
     }
     
     /**
      * Get model output tensor names.
      *
-     * @return List of output tensor names
+     * @return List of output tensor names (currently returns empty list)
      */
     fun getOutputNames(): List<String> {
         checkNotClosed()
-        return nativeGetOutputNames(nativeHandle).toList()
+        // TODO: Implement in JNI
+        return emptyList()
     }
     
     /**
@@ -74,16 +65,5 @@ class MNNModel internal constructor(private val nativeHandle: Long) {
     }
     
     // Native methods
-    private external fun nativeCreateInterpreter(
-        modelHandle: Long,
-        numThreads: Int,
-        forwardType: Int,
-        precision: Int,
-        power: Int,
-        memory: Int
-    ): Long
-    
-    private external fun nativeGetInputNames(modelHandle: Long): Array<String>
-    private external fun nativeGetOutputNames(modelHandle: Long): Array<String>
     private external fun nativeReleaseModel(modelHandle: Long)
 }

@@ -16,7 +16,26 @@ android {
         
         // Native library configuration
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+        
+        // CMake configuration for JNI bridge
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DANDROID_PLATFORM=android-21"
+                )
+                cppFlags += listOf("-std=c++17", "-frtti", "-fexceptions")
+            }
+        }
+    }
+    
+    // CMake build configuration
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 
@@ -46,7 +65,7 @@ android {
     sourceSets {
         getByName("main") {
             // Include prebuilt native libraries
-            jniLibs.srcDirs("libs")
+            jniLibs.srcDirs("src/main/jniLibs")
         }
     }
     

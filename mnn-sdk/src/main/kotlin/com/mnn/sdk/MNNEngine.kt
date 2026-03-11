@@ -16,9 +16,9 @@ import java.io.File
 class MNNEngine private constructor(private val context: Context) {
     
     init {
-        // Load native MNN library
+        // Load native MNN JNI bridge library
         try {
-            System.loadLibrary("MNN")
+            System.loadLibrary("mnn-jni-bridge")
         } catch (e: UnsatisfiedLinkError) {
             throw MNNException("Failed to load MNN native library", e)
         }

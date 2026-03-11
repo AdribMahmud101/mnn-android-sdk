@@ -5,11 +5,29 @@ import kotlinx.coroutines.withContext
 
 /**
  * MNN Interpreter for running model inference.
- * Created from a MNNModel instance.
+ * Uses MNN Session internally for efficient inference.
  */
-class MNNInterpreter internal constructor(private val nativeHandle: Long) {
+class MNNInterpreter internal constructor(
+    private val interpreterPtr: Long,
+    private val config: MNNConfig
+) {
     
+    private var sessionPtr: Long = 0L
     private var isClosed = false
+    
+    init {
+        // Create MNN session with configuration
+        sessionPtr = nativeCreateSession(
+            interpreterPtr,
+            config.forwardType,
+            config.numThreads,
+            config.precision,
+            config.power
+        )
+        if (sessionPtr == 0L) {
+            throw MNNException("Failed to create MNN session")
+        }
+    }
     
     /**
      * Run inference with input tensors.
@@ -21,25 +39,35 @@ class MNNInterpreter internal constructor(private val nativeHandle: Long) {
     fun run(inputs: Map<String, MNNTensor>): Map<String, MNNTensor> {
         checkNotClosed()
         
-        // Set inputs
+        // Set input data
         for ((name, tensor) in inputs) {
-            nativeSetInput(nativeHandle, name, tensor.getData(), tensor.getShape())
+            val inputTensorPtr = nativeGetInputTensor(interpreterPtr, sessionPtr, name)
+            if (inputTensorPtr == 0L) {
+                throw MNNException("Failed to get input tensor: $name")
+            }
+            
+            // Copy data to native tensor
+            val success = nativeCopyToTensor(inputTensorPtr, tensor.getData())
+            if (!success) {
+                throw MNNException("Failed to copy data to input tensor: $name")
+            }
         }
         
         // Run inference
-        val success = nativeRun(nativeHandle)
+        val success = nativeRun(interpreterPtr, sessionPtr)
         if (!success) {
             throw MNNException("Inference failed")
         }
         
-        // Get outputs
-        val outputNames = nativeGetOutputNames(nativeHandle)
+        // Get outputs - for now, assume default output
         val outputs = mutableMapOf<String, MNNTensor>()
         
-        for (name in outputNames) {
-            val data = nativeGetOutput(nativeHandle, name)
-            val shape = nativeGetOutputShape(nativeHandle, name)
-            outputs[name] = MNNTensor(data, shape)
+        // Get default output tensor (empty string means default)
+        val outputTensorPtr = nativeGetOutputTensor(interpreterPtr, sessionPtr, null)
+        if (outputTensorPtr != 0L) {
+            val data = nativeCopyFromTensor(outputTensorPtr)
+            val shape = nativeGetTensorShape(outputTensorPtr)
+            outputs["output"] = MNNTensor(data, shape)
         }
         
         return outputs
@@ -54,15 +82,36 @@ class MNNInterpreter internal constructor(private val nativeHandle: Long) {
      * @throws MNNException if inference fails
      */
     fun run(input: MNNTensor): MNNTensor {
-        val inputNames = nativeGetInputNames(nativeHandle)
-        if (inputNames.isEmpty()) {
-            throw MNNException("Model has no inputs")
+        checkNotClosed()
+        
+        // Get default input tensor (null means default/first input)
+        val inputTensorPtr = nativeGetInputTensor(interpreterPtr, sessionPtr, null)
+        if (inputTensorPtr == 0L) {
+            throw MNNException("Failed to get input tensor")
         }
         
-        val inputs = mapOf(inputNames[0] to input)
-        val outputs = run(inputs)
+        // Copy data to native tensor
+        val success = nativeCopyToTensor(inputTensorPtr, input.getData())
+        if (!success) {
+            throw MNNException("Failed to copy data to input tensor")
+        }
         
-        return outputs.values.first()
+        // Run inference
+        val runSuccess = nativeRun(interpreterPtr, sessionPtr)
+        if (!runSuccess) {
+            throw MNNException("Inference failed")
+        }
+        
+        // Get output tensor
+        val outputTensorPtr = nativeGetOutputTensor(interpreterPtr, sessionPtr, null)
+        if (outputTensorPtr == 0L) {
+            throw MNNException("Failed to get output tensor")
+        }
+        
+        val data = nativeCopyFromTensor(outputTensorPtr)
+        val shape = nativeGetTensorShape(outputTensorPtr)
+        
+        return MNNTensor(data, shape)
     }
     
     /**
@@ -94,12 +143,19 @@ class MNNInterpreter internal constructor(private val nativeHandle: Long) {
     /**
      * Resize input tensor dimensions.
      *
-     * @param inputName Name of the input tensor
+     * @param inputName Name of the input tensor (null for default)
      * @param dims New dimensions
      */
-    fun resizeInput(inputName: String, dims: IntArray) {
+    fun resizeInput(inputName: String?, dims: IntArray) {
         checkNotClosed()
-        nativeResizeInput(nativeHandle, inputName, dims)
+        
+        val inputTensorPtr = nativeGetInputTensor(interpreterPtr, sessionPtr, inputName)
+        if (inputTensorPtr == 0L) {
+            throw MNNException("Failed to get input tensor for resize")
+        }
+        
+        nativeResizeTensor(interpreterPtr, inputTensorPtr, dims)
+        nativeResizeSession(interpreterPtr, sessionPtr)
     }
     
     /**
@@ -107,7 +163,10 @@ class MNNInterpreter internal constructor(private val nativeHandle: Long) {
      */
     fun close() {
         if (!isClosed) {
-            nativeReleaseInterpreter(nativeHandle)
+            if (sessionPtr != 0L) {
+                nativeReleaseSession(interpreterPtr, sessionPtr)
+                sessionPtr = 0L
+            }
             isClosed = true
         }
     }
@@ -123,13 +182,33 @@ class MNNInterpreter internal constructor(private val nativeHandle: Long) {
         close()
     }
     
-    // Native methods
-    private external fun nativeSetInput(handle: Long, name: String, data: FloatArray, shape: IntArray)
-    private external fun nativeRun(handle: Long): Boolean
-    private external fun nativeGetOutput(handle: Long, name: String): FloatArray
-    private external fun nativeGetOutputShape(handle: Long, name: String): IntArray
-    private external fun nativeGetInputNames(handle: Long): Array<String>
-    private external fun nativeGetOutputNames(handle: Long): Array<String>
-    private external fun nativeResizeInput(handle: Long, name: String, dims: IntArray)
-    private external fun nativeReleaseInterpreter(handle: Long)
+    // Native methods matching JNI implementation
+    private external fun nativeCreateSession(
+        interpreterPtr: Long,
+        forwardType: Int,
+        numThreads: Int,
+        precision: Int,
+        powerMode: Int
+    ): Long
+    
+    private external fun nativeRun(interpreterPtr: Long, sessionPtr: Long): Boolean
+    
+    private external fun nativeGetInputTensor(
+        interpreterPtr: Long,
+        sessionPtr: Long,
+        name: String?
+    ): Long
+    
+    private external fun nativeGetOutputTensor(
+        interpreterPtr: Long,
+        sessionPtr: Long,
+        name: String?
+    ): Long
+    
+    private external fun nativeCopyToTensor(tensorPtr: Long, data: FloatArray): Boolean
+    private external fun nativeCopyFromTensor(tensorPtr: Long): FloatArray
+    private external fun nativeGetTensorShape(tensorPtr: Long): IntArray
+    private external fun nativeResizeTensor(interpreterPtr: Long, tensorPtr: Long, dims: IntArray): Boolean
+    private external fun nativeResizeSession(interpreterPtr: Long, sessionPtr: Long): Boolean
+    private external fun nativeReleaseSession(interpreterPtr: Long, sessionPtr: Long)
 }
