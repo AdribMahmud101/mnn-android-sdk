@@ -6,19 +6,20 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.mnn.sdk.MNNConfig
-import com.mnn.sdk.MNNEngine
+import com.mnn.sdk.MNNEngineStub
 import com.mnn.sdk.MNNTensor
 import com.mnn.sdk.Precision
 import kotlinx.coroutines.launch
 
 /**
  * Sample application demonstrating MNN Android SDK usage.
+ * Using stub implementation for testing without native libraries.
  */
 class MainActivity : AppCompatActivity() {
     
     private lateinit var statusText: TextView
     private lateinit var runButton: Button
-    private lateinit var mnnEngine: MNNEngine
+    private lateinit var mnnEngine: MNNEngineStub
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,11 +28,11 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         runButton = findViewById(R.id.runButton)
         
-        // Initialize MNN Engine
+        // Initialize MNN Engine (using stub for testing)
         try {
-            mnnEngine = MNNEngine.initialize(this)
+            mnnEngine = MNNEngineStub.initialize(this)
             val version = mnnEngine.getVersion()
-            updateStatus("MNN Engine initialized\nVersion: $version")
+            updateStatus("MNN Engine initialized (Stub Mode)\nVersion: $version\n\nNote: This is a stub implementation for testing.\nAdd MNN native libraries to enable real inference.")
         } catch (e: Exception) {
             updateStatus("Failed to initialize MNN: ${e.message}")
             runButton.isEnabled = false
@@ -72,26 +73,49 @@ class MainActivity : AppCompatActivity() {
         val shape = intArrayOf(2, 3)
         val tensor = MNNTensor.fromFloatArray(data, shape)
         
+        // Create a simple model with test data
+        val testData = ByteArray(100) { it.toByte() }
+        val model = mnnEngine.loadModelFromBytes(testData, "test_model")
+        val interpreter = model.createInterpreter(MNNConfig(numThreads = 4))
+        
+        // Run inference with stub implementation
+        val output = interpreter.run(tensor)
+        
         updateStatus(
             """
-            Tensor Operations Demo:
+            ✅ Stub Implementation Working!
             
+            Tensor Operations Demo:
             Created tensor:
             Shape: ${shape.contentToString()}
             Size: ${tensor.size()}
             Rank: ${tensor.rank()}
-            Data: ${tensor.toFloatArray().contentToString()}
+            Input Data: ${tensor.toFloatArray().contentToString()}
+            
+            Model Info:
+            Input Names: ${model.getInputNames()}
+            Output Names: ${model.getOutputNames()}
+            
+            Inference Result:
+            Output Shape: ${output.getShape().contentToString()}
+            Output Data (sample): ${output.toFloatArray().take(6).joinToString(", ") { "%.3f".format(it) }}
             
             MNN Config Example:
             ${createConfigExample()}
             
-            To run a real model:
-            1. Add your .mnn model to assets/
-            2. Uncomment the model loading code
-            3. Prepare input tensors
-            4. Run inference
+            📝 Next Steps:
+            1. Add MNN native libraries (.so files) to mnn-sdk/libs/<abi>/
+            2. Implement JNI bridge in MNNEngine.kt
+            3. Replace MNNEngineStub with MNNEngine
+            4. Test with real MNN models
+            
+            The Architecture is FUNCTIONAL! ✨
             """.trimIndent()
         )
+        
+        // Cleanup
+        interpreter.close()
+        model.close()
     }
     
     private fun createConfigExample(): String {

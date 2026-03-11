@@ -1,0 +1,206 @@
+{
+  "lockfile_version": "1",
+  "packages": {
+    "android-tools@latest": {
+      "last_modified": "2026-02-23T15:40:43Z",
+      "resolved": "github:NixOS/nixpkgs/80d901ec0377e19ac3f7bb8c035201e2e098cc97#android-tools",
+      "source": "devbox-search",
+      "version": "35.0.2",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/zvppg0avdaljjp04wnd2hp7qmiis7msv-android-tools-35.0.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/zvppg0avdaljjp04wnd2hp7qmiis7msv-android-tools-35.0.2"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/2cli5fhv844dqvzwwqpxsq6xyl8m70a2-android-tools-35.0.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/2cli5fhv844dqvzwwqpxsq6xyl8m70a2-android-tools-35.0.2"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/5f3k8y0cvvkffai9r7v3irwzihxkrifv-android-tools-35.0.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/5f3k8y0cvvkffai9r7v3irwzihxkrifv-android-tools-35.0.2"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/0mka05jxrk63rw1sp0s1amk5p8hgnd7n-android-tools-35.0.2",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/0mka05jxrk63rw1sp0s1amk5p8hgnd7n-android-tools-35.0.2"
+        }
+      }
+    },
+    "git@latest": {
+      "last_modified": "2026-03-03T16:23:08Z",
+      "resolved": "github:NixOS/nixpkgs/87f6b6e02cb3f87a1be4f939326c94c8af9d55d8#git",
+      "source": "devbox-search",
+      "version": "2.53.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/rfbzyqcygzpyh5ncb79n07x8bhws2pq3-git-2.53.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/lgbyzfz2j1j7g47331i5684765akl38m-git-2.53.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/rfbzyqcygzpyh5ncb79n07x8bhws2pq3-git-2.53.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/xz8bzpl5fz92bkhcdmf4g45znvvzcakd-git-2.53.0",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/xr7sgggqixdji66nhax03lwmk25ms7af-git-2.53.0-debug"
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/lspm2ph3iad5y9irmh2wms6bm3nhhy76-git-2.53.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/xz8bzpl5fz92bkhcdmf4g45znvvzcakd-git-2.53.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/bmddbpv896f9rgnm0835434qjiqh1psc-git-2.53.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/0wx1wdjy7imyv7cp6p6m2l17ycq7n3q4-git-2.53.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/bmddbpv896f9rgnm0835434qjiqh1psc-git-2.53.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/8x49w8i0vafv34rlc6h4a0f7z0z2qpb5-git-2.53.0",
+              "default": true
+            },
+            {
+              "name": "debug",
+              "path": "/nix/store/i9fi7yqx2z2dryn80w5pr4b1v4nmyida-git-2.53.0-debug"
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/frqc9w8q0dxsg7b8w3j0cv1lb9bd6xww-git-2.53.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/8x49w8i0vafv34rlc6h4a0f7z0z2qpb5-git-2.53.0"
+        }
+      }
+    },
+    "github:NixOS/nixpkgs/nixpkgs-unstable": {
+      "last_modified": "2026-03-10T02:35:18Z",
+      "resolved": "github:NixOS/nixpkgs/e607cb5360ff1234862ac9f8839522becb853bb9?lastModified=1773110118"
+    },
+    "gradle@latest": {
+      "last_modified": "2026-02-23T15:40:43Z",
+      "plugin_version": "0.0.1",
+      "resolved": "github:NixOS/nixpkgs/80d901ec0377e19ac3f7bb8c035201e2e098cc97#gradle",
+      "source": "devbox-search",
+      "version": "8.14.4",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/f70pag2nwpz7nxpm22g73w1x42vmyxgw-gradle-8.14.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/f70pag2nwpz7nxpm22g73w1x42vmyxgw-gradle-8.14.4"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/r1pkjl21d6r0l5mxkakrnvbqvp82r66n-gradle-8.14.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/r1pkjl21d6r0l5mxkakrnvbqvp82r66n-gradle-8.14.4"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/3rkgpz558vwry483hmsq3w9my2d431wm-gradle-8.14.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/3rkgpz558vwry483hmsq3w9my2d431wm-gradle-8.14.4"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/a6f1cidn90l8w9f0k1zxla39gc9n40zl-gradle-8.14.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/a6f1cidn90l8w9f0k1zxla39gc9n40zl-gradle-8.14.4"
+        }
+      }
+    },
+    "jdk17@latest": {
+      "last_modified": "2025-10-22T20:59:19Z",
+      "resolved": "github:NixOS/nixpkgs/01b6809f7f9d1183a2b3e081f0a1e6f8f415cb09#jdk17",
+      "source": "devbox-search",
+      "version": "17.0.12",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/hlm8a8cnp4hm8xkg0a2yy4kv7cq44jii-zulu-ca-jdk-17.0.12",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/hlm8a8cnp4hm8xkg0a2yy4kv7cq44jii-zulu-ca-jdk-17.0.12"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/i4zgq9685y6284hbf5a7ac9ysb88dvlz-zulu-ca-jdk-17.0.12",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/i4zgq9685y6284hbf5a7ac9ysb88dvlz-zulu-ca-jdk-17.0.12"
+        }
+      }
+    }
+  }
+}
