@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MNN SDK Sample</string>
+    <string name="run_inference">Run Inference Demo</string>
+    <string name="initial_status">Initializing MNN Engine…</string>
+</resources>

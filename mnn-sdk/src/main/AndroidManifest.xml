@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.mnn.sdk">
+    
+    <!-- SDK doesn't require any permissions by default -->
+    <!-- Apps using the SDK should declare their own permissions -->
+    
+</manifest>
