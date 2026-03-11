@@ -6,20 +6,20 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.mnn.sdk.MNNConfig
-import com.mnn.sdk.MNNEngineStub
+import com.mnn.sdk.MNNEngine
 import com.mnn.sdk.MNNTensor
 import com.mnn.sdk.Precision
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 /**
  * Sample application demonstrating MNN Android SDK usage.
- * Using stub implementation for testing without native libraries.
  */
 class MainActivity : AppCompatActivity() {
     
     private lateinit var statusText: TextView
     private lateinit var runButton: Button
-    private lateinit var mnnEngine: MNNEngineStub
+    private lateinit var mnnEngine: MNNEngine
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,13 +28,13 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         runButton = findViewById(R.id.runButton)
         
-        // Initialize MNN Engine (using stub for testing)
+        // Initialize MNN Engine
         try {
-            mnnEngine = MNNEngineStub.initialize(this)
+            mnnEngine = MNNEngine.initialize(this)
             val version = mnnEngine.getVersion()
-            updateStatus("MNN Engine initialized (Stub Mode)\nVersion: $version\n\nNote: This is a stub implementation for testing.\nAdd MNN native libraries to enable real inference.")
+            updateStatus("✅ MNN Engine initialized successfully!\nVersion: $version\n\nReady for inference.\n\nNote: To run inference, add a .mnn model file to assets/models/")
         } catch (e: Exception) {
-            updateStatus("Failed to initialize MNN: ${e.message}")
+            updateStatus("❌ Failed to initialize MNN: ${e.message}\n\nMake sure MNN native libraries are included.")
             runButton.isEnabled = false
             return
         }
@@ -50,17 +50,36 @@ class MainActivity : AppCompatActivity() {
                 updateStatus("Running inference...")
                 runButton.isEnabled = false
                 
-                // Example: Load and run a model
-                // Note: You'll need to add a real .mnn model file to assets
-                // val model = mnnEngine.loadModelFromAssets("model.mnn")
-                
-                // For demonstration, we'll show how to create tensors
-                demonstrateTensorOperations()
-                
-                updateStatus("Inference completed successfully!")
+                // Try to load a model from assets
+                try {
+                    val modelBytes = assets.open("models/model.mnn").readBytes()
+                    val model = mnnEngine.loadModelFromBytes(modelBytes)
+                    
+                    // Create interpreter with configuration
+                    val config = MNNConfig(
+                        numThreads = 4,
+                        precision = Precision.HIGH
+                    )
+                    val interpreter = model.createInterpreter(config)
+                    
+                    // Example: Create input tensor (adjust dimensions for your model)
+                    val input = MNNTensor.zeros(intArrayOf(1, 224, 224, 3))
+                    
+                    // Run inference
+                    val output = interpreter.run(input)
+                    
+                    updateStatus("✅ Inference completed!\nOutput shape: ${output.getShape().contentToString()}\nFirst 5 values: ${output.getData().take(5)}")
+                    
+                    interpreter.close()
+                    model.close()
+                    
+                } catch (e: IOException) {
+                    // No model file found - show example usage
+                    demonstrateTensorOperations()
+                }
                 
             } catch (e: Exception) {
-                updateStatus("Inference failed: ${e.message}\n${e.stackTraceToString()}")
+                updateStatus("❌ Inference failed: ${e.message}\n\n${e.stackTraceToString()}")
             } finally {
                 runButton.isEnabled = true
             }
@@ -73,49 +92,31 @@ class MainActivity : AppCompatActivity() {
         val shape = intArrayOf(2, 3)
         val tensor = MNNTensor.fromFloatArray(data, shape)
         
-        // Create a simple model with test data
-        val testData = ByteArray(100) { it.toByte() }
-        val model = mnnEngine.loadModelFromBytes(testData, "test_model")
-        val interpreter = model.createInterpreter(MNNConfig(numThreads = 4))
-        
-        // Run inference with stub implementation
-        val output = interpreter.run(tensor)
-        
         updateStatus(
             """
-            ✅ Stub Implementation Working!
+            ℹ️ No model file found at assets/models/model.mnn
             
             Tensor Operations Demo:
             Created tensor:
             Shape: ${shape.contentToString()}
             Size: ${tensor.size()}
             Rank: ${tensor.rank()}
-            Input Data: ${tensor.toFloatArray().contentToString()}
-            
-            Model Info:
-            Input Names: ${model.getInputNames()}
-            Output Names: ${model.getOutputNames()}
-            
-            Inference Result:
-            Output Shape: ${output.getShape().contentToString()}
-            Output Data (sample): ${output.toFloatArray().take(6).joinToString(", ") { "%.3f".format(it) }}
+            Data: ${tensor.toFloatArray().contentToString()}
             
             MNN Config Example:
             ${createConfigExample()}
             
-            📝 Next Steps:
-            1. Add MNN native libraries (.so files) to mnn-sdk/libs/<abi>/
-            2. Implement JNI bridge in MNNEngine.kt
-            3. Replace MNNEngineStub with MNNEngine
-            4. Test with real MNN models
+            📝 To run real inference:
+            1. Convert your model to MNN format (.mnn)
+            2. Place it in assets/models/model.mnn
+            3. Tap "Run Inference" again
             
-            The Architecture is FUNCTIONAL! ✨
+            For model conversion, see:
+            https://mnn-docs.readthedocs.io/en/latest/tools/convert.html
+            
+            The SDK is READY for real inference! ✨
             """.trimIndent()
         )
-        
-        // Cleanup
-        interpreter.close()
-        model.close()
     }
     
     private fun createConfigExample(): String {

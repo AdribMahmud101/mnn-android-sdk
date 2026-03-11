@@ -100,3 +100,4 @@ obj/
 
 # Except for our bundled MNN libraries
 !mnn-sdk/libs/**/*.so
+!mnn-sdk/src/main/jniLibs/**/*.so

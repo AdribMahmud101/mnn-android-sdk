@@ -3,17 +3,34 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android-green.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
+[![MNN](https://img.shields.io/badge/MNN-3.4.1-blueviolet.svg)](https://github.com/alibaba/MNN)
 
 An easy-to-use Kotlin Android SDK for [MNN (Mobile Neural Network)](https://github.com/alibaba/MNN), Alibaba's lightweight deep learning inference framework.
 
+**✅ Production Ready** - Full JNI bridge implementation with MNN v3.4.1 native libraries
+
 ## Features
 
-✨ **Simple API** - Intuitive Kotlin DSL for model loading and inference
-🚀 **Coroutines Support** - Async/await pattern for non-blocking operations
-🔒 **Type-Safe** - Leverage Kotlin's type system for safer code
-🎯 **Memory Efficient** - Automatic resource management with lifecycle awareness
-⚡ **High Performance** - Direct JNI bindings to native MNN library
-📦 **Easy Integration** - Single AAR dependency with bundled native libraries
+✨ **Simple API** - Intuitive Kotlin DSL for model loading and inference  
+🚀 **Coroutines Support** - Async/await pattern for non-blocking operations  
+🔒 **Type-Safe** - Leverage Kotlin's type system for safer code  
+🎯 **Memory Efficient** - Automatic resource management with lifecycle awareness  
+⚡ **High Performance** - Direct JNI bindings to native MNN library  
+📦 **Easy Integration** - Single AAR dependency with bundled native libraries  
+🏗️ **Real MNN** - Full C++ JNI bridge with session-based inference  
+🎨 **GPU Support** - Includes OpenCL and Vulkan backends  
+
+## What's Working
+
+- ✅ MNN v3.4.1 native libraries (arm64-v8a, armeabi-v7a)
+- ✅ Complete JNI bridge (C++)
+- ✅ Kotlin API wrapper with session management
+- ✅ Model loading from bytes/files/assets
+- ✅ Tensor operations and data transfer
+- ✅ Synchronous and asynchronous inference
+- ✅ Configuration options (threads, precision, backend)
+- ✅ Resource management and cleanup
+- ✅ Sample application demonstrating usage
 
 ## Quick Start
 
@@ -90,13 +107,55 @@ lifecycleScope.launch {
 
 ```
 mnn_android_sdk/
-├── mnn-sdk/              # Core SDK library
-│   ├── src/main/kotlin/  # Kotlin wrapper code
-│   └── libs/             # Native MNN libraries (.so)
-├── sample/               # Sample application
-├── docs/                 # Documentation
-└── PLAN.md              # Development plan
+├── mnn-sdk/                      # Core SDK library
+│   ├── src/main/kotlin/          # Kotlin wrapper code
+│   ├── src/main/cpp/             # JNI bridge (C++)
+│   │   ├── mnn_engine.cpp        # Model loading & version
+│   │   ├── mnn_interpreter.cpp   # Session & inference
+│   │   ├── mnn_tensor.cpp        # Tensor data transfer
+│   │   ├── CMakeLists.txt        # CMake configuration
+│   │   └── include/MNN/          # MNN C++ headers
+│   └── src/main/jniLibs/         # Native MNN libraries
+│       ├── arm64-v8a/            # 64-bit ARM libs
+│       └── armeabi-v7a/          # 32-bit ARM libs
+├── sample/                       # Sample application
+├── docs/                         # Documentation
+├── INTEGRATION_PLAN.md           # Native integration guide
+└── NEXT_STEPS.md                 # Quick start for integration
 ```
+
+## Building the SDK
+
+```bash
+# Build AAR
+./gradlew mnn-sdk:assembleRelease
+
+# Output: mnn-sdk/build/outputs/aar/mnn-sdk-release.aar (5.5MB)
+```
+
+## Requirements
+
+- Android SDK API 21+ (Android 5.0+)
+- Kotlin 1.9.20+
+- Android NDK (for building from source)
+- CMake 3.22.1+
+
+## Model Conversion
+
+To use your own models, convert them to MNN format:
+
+```bash
+# Install MNN tools
+pip install MNN
+
+# Convert from ONNX
+python -m MNN.tools.mnnconvert -f ONNX --modelFile model.onnx --MNNModel model.mnn
+
+# Convert from TensorFlow
+python -m MNN.tools.mnnconvert -f TF --modelFile model.pb --MNNModel model.mnn
+```
+
+See [MNN Convert Tool Documentation](https://mnn-docs.readthedocs.io/en/latest/tools/convert.html) for more details.
 
 ## Requirements
 
