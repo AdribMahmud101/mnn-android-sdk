@@ -1,3 +1,11 @@
+# Development documentation (personal notes)
+PLAN.md
+BUILD_VERIFICATION.md
+IMPLEMENTATION_VERIFIED.md
+INTEGRATION_PLAN.md
+NEXT_STEPS.md
+SETUP_COMPLETE.md
+
 # Built application files
 *.apk
 *.ap_
