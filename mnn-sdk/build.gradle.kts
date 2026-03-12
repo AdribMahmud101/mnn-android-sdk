@@ -23,11 +23,18 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += listOf(
-                    "-DANDROID_STL=c++_shared",
+                    "-DANDROID_STL=c++_static",
                     "-DANDROID_PLATFORM=android-21"
                 )
                 cppFlags += listOf("-std=c++17", "-frtti", "-fexceptions")
             }
+        }
+    }
+    
+    packagingOptions {
+        // Exclude libc++_shared from CMake, we'll use the one from jniLibs that matches libMNN.so
+        jniLibs {
+            pickFirsts.add("**/libc++_shared.so")
         }
     }
     
