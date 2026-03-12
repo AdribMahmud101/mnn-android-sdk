@@ -141,6 +141,60 @@ class MNNInterpreter internal constructor(
     }
     
     /**
+     * Run inference with performance metrics tracking
+     * Returns a HashMap containing inference results and timing information
+     * 
+     * @param input Input tensor
+     * @return HashMap with "output" tensor and performance metrics
+     * @throws MNNException if inference fails
+     */
+    fun runWithMetrics(input: MNNTensor): HashMap<String, Any> {
+        checkNotClosed()
+        
+        // Get default input tensor
+        val inputTensorPtr = nativeGetInputTensor(interpreterPtr, sessionPtr, null)
+        if (inputTensorPtr == 0L) {
+            throw MNNException("Failed to get input tensor")
+        }
+        
+        // Copy data to native tensor
+        val success = nativeCopyToTensor(inputTensorPtr, input.getData())
+        if (!success) {
+            throw MNNException("Failed to copy data to input tensor")
+        }
+        
+        // Run inference with metrics
+        val metricsMap = nativeRunWithMetrics(interpreterPtr, sessionPtr)
+        
+        // Check for error
+        if (metricsMap.containsKey("error")) {
+            throw MNNException(metricsMap["error"] as String)
+        }
+        
+        // Get output tensor
+        val outputTensorPtr = nativeGetOutputTensor(interpreterPtr, sessionPtr, null)
+        if (outputTensorPtr != 0L) {
+            val data = nativeCopyFromTensor(outputTensorPtr)
+            val shape = nativeGetTensorShape(outputTensorPtr)
+            metricsMap["output"] = MNNTensor(data, shape)
+        }
+        
+        return metricsMap
+    }
+    
+    /**
+     * Run inference asynchronously with metrics tracking
+     * 
+     * @param input Input tensor
+     * @return HashMap with output and performance metrics
+     */
+    suspend fun runWithMetricsAsync(input: MNNTensor): HashMap<String, Any> {
+        return withContext(Dispatchers.Default) {
+           runWithMetrics(input)
+        }
+    }
+    
+    /**
      * Resize input tensor dimensions.
      *
      * @param inputName Name of the input tensor (null for default)
@@ -155,6 +209,15 @@ class MNNInterpreter internal constructor(
         }
         
         nativeResizeTensor(interpreterPtr, inputTensorPtr, dims)
+        nativeResizeSession(interpreterPtr, sessionPtr)
+    }
+    
+    /**
+     * Resize session to apply tensor configurations.
+     * Must be called after creating the session and before first inference.
+     */
+    fun resizeSession() {
+        checkNotClosed()
         nativeResizeSession(interpreterPtr, sessionPtr)
     }
     
@@ -211,4 +274,5 @@ class MNNInterpreter internal constructor(
     private external fun nativeResizeTensor(interpreterPtr: Long, tensorPtr: Long, dims: IntArray): Boolean
     private external fun nativeResizeSession(interpreterPtr: Long, sessionPtr: Long): Boolean
     private external fun nativeReleaseSession(interpreterPtr: Long, sessionPtr: Long)
+    private external fun nativeRunWithMetrics(interpreterPtr: Long, sessionPtr: Long): HashMap<String, Any>
 }

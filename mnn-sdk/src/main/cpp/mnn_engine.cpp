@@ -56,6 +56,41 @@ Java_com_mnn_sdk_MNNEngine_nativeLoadModel(
 }
 
 /**
+ * Load model from file path (for models with external weight files)
+ */
+JNIEXPORT jlong JNICALL
+Java_com_mnn_sdk_MNNEngine_nativeLoadModelFromPath(
+    JNIEnv* env,
+    jobject thiz,
+    jstring model_path) {
+    
+    if (model_path == nullptr) {
+        LOGE("Model path is null");
+        return 0;
+    }
+    
+    const char* path = env->GetStringUTFChars(model_path, nullptr);
+    if (path == nullptr) {
+        LOGE("Failed to get model path string");
+        return 0;
+    }
+    
+    // Create MNN Interpreter from file
+    // This allows MNN to automatically load external weight files (e.g., .mnn.weight)
+    auto* interpreter = MNN::Interpreter::createFromFile(path);
+    
+    env->ReleaseStringUTFChars(model_path, path);
+    
+    if (interpreter == nullptr) {
+        LOGE("Failed to create MNN interpreter from file: %s", path);
+        return 0;
+    }
+    
+    LOGI("Model loaded successfully from path: %s", path);
+    return reinterpret_cast<jlong>(interpreter);
+}
+
+/**
  * Get MNN library version
  */
 JNIEXPORT jstring JNICALL

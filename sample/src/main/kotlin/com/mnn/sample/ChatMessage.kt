@@ -1,12 +1,16 @@
 package com.mnn.sample
 
 /**
- * Represents a chat message
+ * Represents a chat message.
+ * @param imagePath  Absolute path to an attached image (user messages sent to a VLM).
+ * @param thinkingText  Chain-of-thought block from the model (stripped from [text]).
  */
 data class ChatMessage(
     val text: String,
     val isUser: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val imagePath: String? = null,
+    val thinkingText: String? = null
 )
 
 /**

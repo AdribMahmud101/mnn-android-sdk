@@ -16,26 +16,66 @@
         android:background="@android:color/white"
         android:elevation="4dp"
         android:orientation="vertical"
-        android:padding="16dp"
+        android:padding="12dp"
         app:layout_constraintTop_toTopOf="parent">
 
-        <TextView
-            android:id="@+id/titleText"
-            android:layout_width="wrap_content"
+        <!-- Title row: model name + capability badges -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="MNN LLM Demo"
-            android:textColor="#212121"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/titleText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="MNN LLM Demo"
+                android:textColor="#212121"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <!-- Think badge: shown only when model supports thinking -->
+            <TextView
+                android:id="@+id/thinkBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="🧠"
+                android:textSize="16sp"
+                android:visibility="gone" />
+
+            <!-- Vision badge: shown only for VLM models -->
+            <TextView
+                android:id="@+id/visionBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="👁"
+                android:textSize="16sp"
+                android:visibility="gone" />
+
+        </LinearLayout>
 
         <TextView
             android:id="@+id/statusText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="2dp"
             android:text="Initializing..."
             android:textColor="#757575"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/metricsText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text=""
+            android:textColor="#2196F3"
+            android:textSize="11sp"
+            android:fontFamily="monospace" />
 
     </LinearLayout>
 
@@ -46,9 +86,83 @@
         android:layout_height="0dp"
         android:clipToPadding="false"
         android:padding="8dp"
-        app:layout_constraintBottom_toTopOf="@id/inputLayout"
+        app:layout_constraintBottom_toTopOf="@id/thinkingBar"
         app:layout_constraintTop_toBottomOf="@id/headerLayout"
         tools:listitem="@layout/item_message" />
+
+    <!-- Thinking toggle bar: visible only when model supports thinking -->
+    <LinearLayout
+        android:id="@+id/thinkingBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FFF8E1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/imagePreviewBar"
+        app:layout_constraintTop_toBottomOf="@id/messagesRecyclerView">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🧠 Chain-of-Thought Thinking"
+            android:textColor="#5D4037"
+            android:textSize="13sp" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/thinkingSwitch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:checked="false" />
+
+    </LinearLayout>
+
+    <!-- Selected image preview bar: visible only when an image is picked -->
+    <LinearLayout
+        android:id="@+id/imagePreviewBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#E3F2FD"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/inputLayout"
+        app:layout_constraintTop_toBottomOf="@id/thinkingBar">
+
+        <ImageView
+            android:id="@+id/selectedImageThumb"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:scaleType="centerCrop"
+            android:contentDescription="Selected image" />
+
+        <TextView
+            android:id="@+id/selectedImageName"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="image.jpg"
+            android:textColor="#1565C0"
+            android:textSize="13sp"
+            android:singleLine="true"
+            android:ellipsize="middle" />
+
+        <Button
+            android:id="@+id/removeImageButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="✕"
+            android:textSize="16sp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:padding="8dp" />
+
+    </LinearLayout>
 
     <!-- Input Layout -->
     <LinearLayout
@@ -58,8 +172,22 @@
         android:background="@android:color/white"
         android:elevation="8dp"
         android:orientation="horizontal"
-        android:padding="8dp"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp"
         app:layout_constraintBottom_toBottomOf="parent">
+
+        <!-- Photo picker button: enabled only for vision models -->
+        <ImageButton
+            android:id="@+id/photoButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="bottom"
+            android:layout_marginEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Attach image"
+            android:src="@android:drawable/ic_menu_gallery"
+            android:alpha="0.38"
+            android:enabled="false" />
 
         <EditText
             android:id="@+id/inputEditText"
@@ -67,20 +195,21 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:background="@android:drawable/edit_text"
-            android:hint="Type your message..."
+            android:hint="Type your message…"
             android:imeOptions="actionSend"
             android:inputType="textMultiLine|textCapSentences"
             android:maxLines="4"
-            android:minHeight="48dp"
-            android:padding="12dp"
-            android:textSize="16sp" />
+            android:minHeight="44dp"
+            android:padding="10dp"
+            android:textSize="15sp" />
 
         <Button
             android:id="@+id/sendButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:minWidth="64dp"
+            android:layout_gravity="bottom"
+            android:layout_marginStart="6dp"
+            android:minWidth="56dp"
             android:text="Send"
             android:textAllCaps="false" />
 
@@ -92,9 +221,9 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/inputLayout"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@id/headerLayout" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

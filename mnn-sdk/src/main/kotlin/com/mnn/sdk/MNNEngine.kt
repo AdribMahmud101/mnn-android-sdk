@@ -61,7 +61,12 @@ class MNNEngine private constructor(private val context: Context) {
      * @throws MNNException if model loading fails
      */
     fun loadModelFromPath(path: String): MNNModel {
-        return loadModelFromFile(File(path))
+        // Use native path-based loading for LLM models with external weight files
+        val nativeHandle = nativeLoadModelFromPath(path)
+        if (nativeHandle == 0L) {
+            throw MNNException("Failed to load model from path: $path")
+        }
+        return MNNModel(nativeHandle)
     }
     
     /**
@@ -90,6 +95,7 @@ class MNNEngine private constructor(private val context: Context) {
     
     // Native methods
     private external fun nativeLoadModel(modelData: ByteArray): Long
+    private external fun nativeLoadModelFromPath(modelPath: String): Long
     private external fun nativeGetVersion(): String
     
     companion object {

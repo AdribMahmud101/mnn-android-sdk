@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <string>
 #include <vector>
+#include <chrono>
 #include <android/log.h>
 #include <MNN/Interpreter.hpp>
 #include <MNN/MNNDefine.h>
@@ -241,6 +242,81 @@ Java_com_mnn_sdk_MNNInterpreter_nativeResizeSession(
     
     LOGD("Session resized");
     return JNI_TRUE;
+}
+
+/**
+ * Run inference with performance metrics
+ * Returns HashMap with timing information similar to official MNN LLM Chat app
+ */
+JNIEXPORT jobject JNICALL
+Java_com_mnn_sdk_MNNInterpreter_nativeRunWithMetrics(
+    JNIEnv* env,
+    jobject thiz,
+    jlong interpreter_ptr,
+    jlong session_ptr) {
+    
+    // Create HashMap for result
+    jclass hashMapClass = env->FindClass("java/util/HashMap");
+    jmethodID hashMapInit = env->GetMethodID(hashMapClass, "<init>", "()V");
+    jmethodID putMethod = env->GetMethodID(hashMapClass, "put",
+                                           "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+    jobject hashMap = env->NewObject(hashMapClass, hashMapInit);
+    
+    if (interpreter_ptr == 0 || session_ptr == 0) {
+        LOGE("Interpreter or session pointer is null");
+        env->CallObjectMethod(hashMap, putMethod, 
+                            env->NewStringUTF("error"),
+                            env->NewStringUTF("Invalid interpreter or session"));
+        return hashMap;
+    }
+    
+    auto* interpreter = reinterpret_cast<MNN::Interpreter*>(interpreter_ptr);
+    auto* session = reinterpret_cast<MNN::Session*>(session_ptr);
+    
+    // Measure inference time
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    auto error_code = interpreter->runSession(session);
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    if (error_code != MNN::NO_ERROR) {
+        LOGE("Inference failed with error code: %d", error_code);
+        env->CallObjectMethod(hashMap, putMethod,
+                            env->NewStringUTF("error"),
+                            env->NewStringUTF("Inference failed"));
+        return hashMap;
+    }
+    
+    // Add success flag
+    jclass booleanClass = env->FindClass("java/lang/Boolean");
+    jmethodID booleanInit = env->GetMethodID(booleanClass, "<init>", "(Z)V");
+    jobject successObj = env->NewObject(booleanClass, booleanInit, JNI_TRUE);
+    env->CallObjectMethod(hashMap, putMethod, env->NewStringUTF("success"), successObj);
+    
+    // Add timing information (in microseconds, matching official MNN app format)
+    jclass longClass = env->FindClass("java/lang/Long");
+    jmethodID longInit = env->GetMethodID(longClass, "<init>", "(J)V");
+    
+    // Prefill time = total inference time (for simple models without separate prefill/decode)
+    jobject prefillTimeObj = env->NewObject(longClass, longInit, (jlong)duration_us);
+    env->CallObjectMethod(hashMap, putMethod, env->NewStringUTF("prefill_time"), prefillTimeObj);
+    
+    // For models without token generation, decode_time is 0
+    jobject decodeTimeObj = env->NewObject(longClass, longInit, (jlong)0);
+    env->CallObjectMethod(hashMap, putMethod, env->NewStringUTF("decode_time"), decodeTimeObj);
+    
+    // Note: For LLM models, these would be populated by the LLM runtime
+    // For now, we set placeholder values
+    jobject promptLenObj = env->NewObject(longClass, longInit, (jlong)0);
+    env->CallObjectMethod(hashMap, putMethod, env->NewStringUTF("prompt_len"), promptLenObj);
+    
+    jobject decodeLenObj = env->NewObject(longClass, longInit, (jlong)0);
+    env->CallObjectMethod(hashMap, putMethod, env->NewStringUTF("decode_len"), decodeLenObj);
+    
+    LOGD("Inference completed successfully in %lld microseconds", (long long)duration_us);
+    return hashMap;
 }
 
 } // extern "C"

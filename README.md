@@ -1,284 +1,300 @@
 <div align="center">
-  <img src="mnn_banner.png" alt="MNN Android SDK" width="100%">
-  
-  # MNN Android SDK
-  
-  [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-  [![Platform](https://img.shields.io/badge/platform-Android-green.svg)](https://developer.android.com)
-  [![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
-  [![MNN](https://img.shields.io/badge/MNN-3.4.1-blueviolet.svg)](https://github.com/alibaba/MNN)
+
+<img src="mnn_banner.png" alt="MNN Android SDK" width="100%">
+
+# MNN Android SDK
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Android%20API%2021%2B-green.svg)](https://developer.android.com)
+[![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
+[![MNN](https://img.shields.io/badge/MNN-LLM-blueviolet.svg)](https://github.com/alibaba/MNN)
+
+**A Kotlin Android SDK for on-device LLM inference powered by [MNN](https://github.com/alibaba/MNN) (Alibaba's Mobile Neural Network framework).**
+
+Supports multi-turn chat, chain-of-thought thinking, vision/multimodal input, automatic model downloading, and real-time performance metrics — all running fully on-device.
+
 </div>
 
-An easy-to-use Kotlin Android SDK for [MNN (Mobile Neural Network)](https://github.com/alibaba/MNN), Alibaba's lightweight deep learning inference framework.
-
-**✅ Production Ready** - Full JNI bridge implementation with MNN v3.4.1 native libraries
+---
 
 ## Features
 
-✨ **Simple API** - Intuitive Kotlin DSL for model loading and inference  
-🚀 **Coroutines Support** - Async/await pattern for non-blocking operations  
-🔒 **Type-Safe** - Leverage Kotlin's type system for safer code  
-🎯 **Memory Efficient** - Automatic resource management with lifecycle awareness  
-⚡ **High Performance** - Direct JNI bindings to native MNN library  
-📦 **Easy Integration** - Single AAR dependency with bundled native libraries  
-🏗️ **Real MNN** - Full C++ JNI bridge with session-based inference  
-🎨 **GPU Support** - Includes OpenCL and Vulkan backends  
+- **LLM Chat** — Multi-turn conversations with any MNN-format LLM (Qwen2.5, Qwen3, Qwen3.5, etc.)
+- **Thinking Mode** — Toggle chain-of-thought reasoning on/off per message (Qwen3/Qwen3.5 style `<think>` blocks)
+- **Vision / VLM** — Send images alongside text to multimodal models (Qwen3.5-VL)
+- **Model Downloader** — Fetch models directly from HuggingFace or ModelScope with live progress
+- **Auto Model Repair** — Detects and re-downloads missing files (embeddings, visual weights) before inference
+- **Performance Metrics** — Prefill speed, decode speed, tokens/sec after every response
+- **Model Management** — List, load, switch, and delete downloaded models at runtime
+- **Full JNI Bridge** — Direct C++ bindings to `MNN::Transformer::Llm`, no overhead layer
 
-## What's Working
-
-- ✅ MNN v3.4.1 native libraries (arm64-v8a, armeabi-v7a)
-- ✅ Complete JNI bridge (C++)
-- ✅ Kotlin API wrapper with session management
-- ✅ Model loading from bytes/files/assets
-- ✅ Tensor operations and data transfer
-- ✅ Synchronous and asynchronous inference
-- ✅ Configuration options (threads, precision, backend)
-- ✅ Resource management and cleanup
-- ✅ Sample application demonstrating usage
-
-## Quick Start
-
-### Installation
-
-Add to your `build.gradle.kts`:
-
-```kotlin
-dependencies {
-    implementation("com.mnn:mnn-sdk:1.0.0")
-}
-```
-
-Or use Maven local for development:
-
-```bash
-./gradlew :mnn-sdk:publishToMavenLocal
-```
-
-```kotlin
-dependencies {
-    implementation("com.mnn:mnn-sdk:1.0.0")
-}
-```
-
-### Basic Usage
-
-```kotlin
-// Initialize the MNN engine
-val engine = MNNEngine.initialize(context)
-
-// Load a model from assets
-val model = engine.loadModelFromAssets("mobilenet.mnn")
-
-// Configure the interpreter
-val config = MNNConfig(
-    numThreads = 4,
-    precision = Precision.NORMAL
-)
-val interpreter = model.createInterpreter(config)
-
-// Prepare input tensor
-val inputTensor = MNNTensor.fromBitmap(bitmap)
-
-// Run inference
-val outputTensor = interpreter.run(inputTensor)
-
-// Process results
-val results = outputTensor.toFloatArray()
-
-// Clean up
-interpreter.close()
-model.close()
-```
-
-### Using Coroutines
-
-```kotlin
-lifecycleScope.launch {
-    val output = interpreter.runAsync(inputTensor)
-    // Handle results on main thread
-    updateUI(output)
-}
-```
-
-## Documentation
-
-- [Getting Started Guide](docs/GETTING_STARTED.md)
-- [API Reference](docs/API.md)
-- [Examples](docs/EXAMPLES.md)
-- [Building from Source](docs/BUILDING.md)
+---
 
 ## Project Structure
 
 ```
 mnn_android_sdk/
-├── mnn-sdk/                      # Core SDK library
-│   ├── src/main/kotlin/          # Kotlin wrapper code
-│   ├── src/main/cpp/             # JNI bridge (C++)
-│   │   ├── mnn_engine.cpp        # Model loading & version
-│   │   ├── mnn_interpreter.cpp   # Session & inference
-│   │   ├── mnn_tensor.cpp        # Tensor data transfer
-│   │   ├── CMakeLists.txt        # CMake configuration
-│   │   └── include/MNN/          # MNN C++ headers
-│   └── src/main/jniLibs/         # Native MNN libraries
-│       ├── arm64-v8a/            # 64-bit ARM libs
-│       └── armeabi-v7a/          # 32-bit ARM libs
-├── sample/                       # Sample application
-├── docs/                         # Documentation
-├── INTEGRATION_PLAN.md           # Native integration guide
-└── NEXT_STEPS.md                 # Quick start for integration
+├── mnn-sdk/                          # Core SDK (Android library module)
+│   ├── src/main/kotlin/com/mnn/sdk/
+│   │   ├── MNNLlm.kt                 # ← Main LLM wrapper (chat, thinking, vision)
+│   │   ├── MNNEngine.kt              # MNN runtime initialisation
+│   │   ├── MNNConfig.kt              # Inference configuration (threads, backend)
+│   │   ├── MNNInterpreter.kt         # General-purpose inference session
+│   │   ├── MNNModel.kt               # Model loading helpers
+│   │   └── MNNTensor.kt              # Tensor data helpers
+│   ├── src/main/cpp/
+│   │   ├── mnn_llm.cpp               # JNI bridge → MNN::Transformer::Llm
+│   │   ├── CMakeLists.txt
+│   │   └── include/llm/llm.hpp       # Minimal MNN LLM header (vtable-matched)
+│   └── src/main/jniLibs/             # Pre-built MNN native libraries
+│       ├── arm64-v8a/                # libMNN.so, libllm.so, libMNN_Express.so …
+│       ├── armeabi-v7a/
+│       ├── x86/
+│       └── x86_64/
+└── sample/                           # Demo chat app
+    └── src/main/kotlin/com/mnn/sample/
+        ├── MainActivity.kt           # Chat UI + model management
+        ├── ChatAdapter.kt            # RecyclerView adapter (thinking blocks, image thumbnails)
+        ├── ChatMessage.kt            # Data class
+        └── model/
+            ├── AdvancedModelDownloader.kt  # HuggingFace/ModelScope downloader
+            └── ModelCatalog.kt             # Catalog JSON models
 ```
 
-## Building the SDK
+---
+
+## Quick Start
+
+### 1. Add the SDK
+
+The SDK is an Android library module. Include it in your project:
+
+```kotlin
+// settings.gradle.kts
+include(":mnn-sdk")
+```
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation(project(":mnn-sdk"))
+}
+```
+
+Or build and publish the AAR locally:
 
 ```bash
-# Build AAR
-./gradlew mnn-sdk:assembleRelease
-
-# Output: mnn-sdk/build/outputs/aar/mnn-sdk-release.aar (5.5MB)
+./gradlew :mnn-sdk:assembleRelease
+# Output: mnn-sdk/build/outputs/aar/mnn-sdk-release.aar
 ```
 
-## Requirements
+### 2. Initialize
 
-- Android SDK API 21+ (Android 5.0+)
-- Kotlin 1.9.20+
-- Android NDK (for building from source)
-- CMake 3.22.1+
-
-## Model Conversion
-
-To use your own models, convert them to MNN format:
-
-```bash
-# Install MNN tools
-pip install MNN
-
-# Convert from ONNX
-python -m MNN.tools.mnnconvert -f ONNX --modelFile model.onnx --MNNModel model.mnn
-
-# Convert from TensorFlow
-python -m MNN.tools.mnnconvert -f TF --modelFile model.pb --MNNModel model.mnn
+```kotlin
+val engine = MNNEngine.initialize(context)
 ```
 
-See [MNN Convert Tool Documentation](https://mnn-docs.readthedocs.io/en/latest/tools/convert.html) for more details.
+### 3. Load a model
 
-## Requirements
-
-- Android API 21+ (Android 5.0 Lollipop)
-- Kotlin 1.9+
-- Android Gradle Plugin 8.0+
-- JDK 17
-
-## Development Setup
-
-This project uses [devbox](https://www.jetpack.io/devbox) and [direnv](https://direnv.net/) for reproducible development environments.
-
-### Prerequisites
-
-```bash
-# Install devbox
-curl -fsSL https://get.jetpack.io/devbox | bash
-
-# Install direnv
-# On Ubuntu/Debian:
-sudo apt install direnv
-
-# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):
-eval "$(direnv hook bash)"  # or zsh, fish, etc.
+```kotlin
+val llm = MNNLlm.create("/data/user/0/com.example/files/models/Qwen3.5-0.8B-MNN/llm_config.json")
+    ?: error("Failed to create LLM")
+val loaded = llm.load()   // blocks — call on a background thread
 ```
 
-### Setup
+### 4. Chat
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd mnn_android_sdk
+```kotlin
+// Simple text
+val reply = llm.response("What is the capital of France?")
 
-# Allow direnv
-direnv allow
+// With thinking enabled (Qwen3/Qwen3.5 models)
+llm.enableThinking = true
+val reply = llm.response("Explain quantum entanglement.")
+println("Reasoning: ${llm.lastThinking}")
+println("Answer:    $reply")
 
-# Enter devbox shell (optional, direnv does this automatically)
-devbox shell
-
-# Build the project
-./gradlew build
-
-# Run sample app
-./gradlew :sample:installDebug
+// With image (VLM models)
+val reply = llm.response("Describe this image.", imagePath = "/sdcard/photo.jpg")
 ```
+
+### 5. Clean up
+
+```kotlin
+llm.clearHistory()   // Reset conversation without unloading the model
+llm.destroy()        // Free native resources
+```
+
+---
+
+## `MNNLlm` API Reference
+
+### Factory
+
+```kotlin
+MNNLlm.create(configPath: String): MNNLlm?
+```
+
+Reads `llm_config.json` to auto-detect:
+- **Chat format** — `QWEN_CHATML` (detected from `prompt_template`, `user_prompt_template`, or `jinja.chat_template`) or `GENERIC`
+- **`supportsThinking`** — true when model has `thinking_template`, `enable_thinking`, or `<think>` in its jinja template
+- **`isVisual`** — true when `is_visual=true` in config **and** `visual.mnn` is present on disk
+
+```kotlin
+llm.load(): Boolean
+```
+
+Loads model weights into memory. Automatically calls `set_config({"use_template":false})` so MNN's internal template engine is bypassed and our fully-formatted prompts are passed through directly.
+
+### Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `supportsThinking` | `Boolean` (read-only) | Whether this model supports `<think>` reasoning blocks |
+| `isVisual` | `Boolean` (read-only) | Whether this model can process images |
+| `enableThinking` | `Boolean` | Toggle thinking mode for the **next** `response()` call |
+| `systemPrompt` | `String` | System prompt prepended to every conversation |
+| `lastThinking` | `String?` (read-only) | Raw thinking block from the last `response()` call |
+
+### Methods
+
+```kotlin
+// Run inference (blocking — call on Dispatchers.IO)
+fun response(
+    userMessage: String,
+    imagePath: String? = null,   // absolute path; only used when isVisual = true
+    maxNewTokens: Int = 512
+): String
+
+// Clear conversation history and KV-cache
+fun clearHistory()
+
+// Performance metrics from the last response() call
+fun lastMetrics(): Metrics   // prefillMs, decodeMs, promptTokens, generatedTokens, tokensPerSec
+
+// Free native resources
+fun destroy()
+```
+
+### Thinking Behaviour
+
+| `enableThinking` | Prompt suffix injected | Expected output |
+|---|---|---|
+| `true` | `<\|im_start\|>assistant\n<think>\n` | `reasoning…</think>\nanswer` |
+| `false` | `<\|im_start\|>assistant\n<think>\n\n</think>\n` | `answer` (thinking skipped via budget-forcing) |
+
+`lastThinking` is always `null` when `enableThinking = false`. The returned string from `response()` is always the **clean answer only** — the think block is stripped automatically.
+
+---
+
+## Model Downloader
+
+`AdvancedModelDownloader` handles fetching models from HuggingFace or ModelScope:
+
+```kotlin
+val downloader = AdvancedModelDownloader(context)
+
+// Download a model
+downloader.downloadModel(modelItem, preferredSource = "HuggingFace")
+    .flowOn(Dispatchers.IO)
+    .collect { state ->
+        when (state) {
+            is DownloadState.Downloading -> println("${state.progress}% — ${state.currentFile}")
+            is DownloadState.Completed   -> loadModel(state.filePath)
+            is DownloadState.Failed      -> showError(state.error)
+            else -> {}
+        }
+    }
+
+// Get all fully-downloaded models (checks required files per ModelProfile)
+val configs: List<File> = downloader.getDownloadedModels()
+
+// Re-download any missing files for an already-present model
+downloader.repairMissingFiles(modelDir).collect { ... }
+
+// Delete a model
+downloader.deleteModel(modelDir.absolutePath)
+```
+
+### ModelProfile
+
+Downloaded file sets are computed dynamically from `llm_config.json`:
+
+| Config field | Files added |
+|---|---|
+| `tie_embeddings` present | No extra embedding file needed |
+| `tie_embeddings` absent | `embeddings_bf16.bin`, `embeddings.bin` (optional probe) |
+| `is_visual = true` + `visual.mnn` on server | `visual.mnn`, `visual.mnn.weight`, `vit_config.json` (optional) |
+| `is_audio = true` | `audio_encoder.mnn`, `audio_encoder.mnn.weight` |
+| `embedding_file` set | That file added as required |
+
+If `visual.mnn` is not available on the server the config is patched to `is_visual = false` so text-only inference still works.
+
+---
 
 ## Building
 
-```bash
-# Build SDK library
-./gradlew :mnn-sdk:assembleRelease
+### Requirements
 
-# Build sample app
+- Android SDK API 34 (compileSdk), min API 21
+- NDK + CMake 3.22.1 (for JNI bridge recompilation)
+- Kotlin 1.9.20
+- JDK 17
+
+### Commands
+
+```bash
+# Build debug APK for the sample app
 ./gradlew :sample:assembleDebug
 
-# Run tests
-./gradlew test
+# Build release AAR of the SDK only
+./gradlew :mnn-sdk:assembleRelease
 
-# Publish to Maven Local
+# Install sample app to connected device
+./gradlew :sample:installDebug
+# or
+adb install -r sample/build/outputs/apk/debug/sample-debug.apk
+
+# Publish SDK to Maven Local
 ./gradlew :mnn-sdk:publishToMavenLocal
 ```
 
-## MNN Native Libraries
+> **Note:** `unset JAVA_HOME` before running Gradle if you have a system JDK conflicting with the Android Studio toolchain.
 
-The SDK requires MNN native libraries (`.so` files) for different architectures:
+---
 
-- `arm64-v8a` - 64-bit ARM devices (most modern phones)
-- `armeabi-v7a` - 32-bit ARM devices
-- `x86` - 32-bit x86 (emulators)
-- `x86_64` - 64-bit x86 (emulators)
+## Supported Models
 
-### Obtaining MNN Libraries
+Any MNN-quantised LLM from [taobao-mnn](https://huggingface.co/taobao-mnn) on HuggingFace works. Tested models:
 
-1. **Download prebuilt binaries** from [MNN Releases](https://github.com/alibaba/MNN/releases)
-2. **Build from source** following [MNN Android Build Guide](https://www.yuque.com/mnn/en/build_android)
-3. Place `.so` files in `mnn-sdk/libs/<abi>/`
+| Model | Thinking | Vision | Size |
+|---|---|---|---|
+| Qwen2.5-0.5B-Instruct-MNN | ✗ | ✗ | ~0.5 GB |
+| Qwen3-0.6B-MNN | ✓ | ✗ | ~0.6 GB |
+| Qwen3.5-0.8B-MNN | ✓ | ✓ | ~0.8 GB |
+| Qwen3.5-2B-MNN | ✓ | ✓ | ~2.0 GB |
 
-## Sample App
+---
 
-The included sample app demonstrates:
-- Engine initialization
-- Model loading
-- Tensor creation and manipulation
-- Synchronous and asynchronous inference
-- Resource cleanup
+## Architecture Notes
 
-Run with:
-```bash
-./gradlew :sample:installDebug
-```
+### Why `use_template = false`
 
-## Contributing
+MNN's `Llm::response(string)` calls `applyTemplate()` internally when `use_template` is true, which re-wraps the entire input as a raw "user" message inside the jinja template. Since we build the full ChatML prompt in Kotlin (including history and the `<think>` prefix), we disable template wrapping at load time with `set_config({"use_template":false})`. The tokenizer then processes our pre-built prompt verbatim.
 
-Contributions are welcome! Please feel free to submit issues and pull requests.
+### VLM Image Handling
+
+Images are injected as `<img>/absolute/path/to/image</img>` immediately before the user's text in the current turn. MNN's `Omni` VLM subclass tokenises this tag by running the vision encoder inside its `tokenizer_encode()` — which requires the `ExecutorScope` set up by `response(string)`. This is why we use `response(string)` (not bare `tokenizer_encode` + `response(vector<int>)`) even after disabling the template.
+
+### Multi-Turn History
+
+Full ChatML is rebuilt from scratch on every call and the KV-cache is reset via `nativeReset()`. The assistant reply stored in history is always the **clean** reply — the `<think>…</think>` block is stripped before being saved, so reasoning never bleeds into subsequent turns.
+
+---
 
 ## License
 
-This SDK wrapper is licensed under Apache 2.0. MNN itself is also Apache 2.0 licensed.
+Apache 2.0 — see [LICENSE](LICENSE).
 
-See [LICENSE](LICENSE) for details.
+MNN itself is also Apache 2.0: [github.com/alibaba/MNN](https://github.com/alibaba/MNN).
 
-## Acknowledgments
-
-- [MNN](https://github.com/alibaba/MNN) - Mobile Neural Network inference framework by Alibaba
-- Inspired by TensorFlow Lite Android API design
-
-## Support
-
-- 📖 [MNN Documentation](https://www.yuque.com/mnn/en)
-- 🐛 [Issue Tracker](../../issues)
-- 💬 [Discussions](../../discussions)
-
-## Roadmap
-
-- [x] Basic model loading and inference
-- [x] Coroutines support
-- [x] Tensor utilities (Bitmap conversion, etc.)
-- [ ] Image preprocessing utilities
-- [ ] Model encryption support
-- [ ] Performance benchmarking tools
-- [ ] Additional backends (GPU, NPU)
-- [ ] Pre-trained model examples

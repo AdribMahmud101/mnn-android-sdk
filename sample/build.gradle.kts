@@ -49,6 +49,10 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:${project.property("KOTLIN_VERSION")}")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${project.property("COROUTINES_VERSION")}")
     
+    // Network & JSON
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.10.1")
+    
     // AndroidX
     implementation("androidx.core:core-ktx:${project.property("ANDROIDX_CORE_VERSION")}")
     implementation("androidx.appcompat:appcompat:${project.property("APPCOMPAT_VERSION")}")
