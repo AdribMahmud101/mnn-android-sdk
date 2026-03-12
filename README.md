@@ -1,9 +1,13 @@
-# MNN Android SDK
-
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Android-green.svg)](https://developer.android.com)
-[![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
-[![MNN](https://img.shields.io/badge/MNN-3.4.1-blueviolet.svg)](https://github.com/alibaba/MNN)
+<div align="center">
+  <img src="mnn_banner.png" alt="MNN Android SDK" width="100%">
+  
+  # MNN Android SDK
+  
+  [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+  [![Platform](https://img.shields.io/badge/platform-Android-green.svg)](https://developer.android.com)
+  [![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
+  [![MNN](https://img.shields.io/badge/MNN-3.4.1-blueviolet.svg)](https://github.com/alibaba/MNN)
+</div>
 
 An easy-to-use Kotlin Android SDK for [MNN (Mobile Neural Network)](https://github.com/alibaba/MNN), Alibaba's lightweight deep learning inference framework.
 
