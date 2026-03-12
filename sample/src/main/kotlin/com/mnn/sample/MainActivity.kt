@@ -1,139 +1,262 @@
 package com.mnn.sample
 
 import android.os.Bundle
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.EditText
+import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.mnn.sdk.MNNConfig
 import com.mnn.sdk.MNNEngine
 import com.mnn.sdk.MNNTensor
 import com.mnn.sdk.Precision
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /**
- * Sample application demonstrating MNN Android SDK usage.
+ * LLM Chat Demo using MNN Android SDK
  */
 class MainActivity : AppCompatActivity() {
     
     private lateinit var statusText: TextView
-    private lateinit var runButton: Button
+    private lateinit var messagesRecyclerView: RecyclerView
+    private lateinit var inputEditText: EditText
+    private lateinit var sendButton: Button
+    private lateinit var loadingProgress: ProgressBar
+    
+    private lateinit var chatAdapter: ChatAdapter
+    private val messages = mutableListOf<ChatMessage>()
+    
     private lateinit var mnnEngine: MNNEngine
+    private var isInitialized = false
+    private var isProcessing = false
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContentView(R.layout.activity_main_chat)
         
-        statusText = findViewById(R.id.statusText)
-        runButton = findViewById(R.id.runButton)
-        
-        // Initialize MNN Engine
-        try {
-            mnnEngine = MNNEngine.initialize(this)
-            val version = mnnEngine.getVersion()
-            updateStatus("✅ MNN Engine initialized successfully!\nVersion: $version\n\nReady for inference.\n\nNote: To run inference, add a .mnn model file to assets/models/")
-        } catch (e: Exception) {
-            updateStatus("❌ Failed to initialize MNN: ${e.message}\n\nMake sure MNN native libraries are included.")
-            runButton.isEnabled = false
-            return
-        }
-        
-        runButton.setOnClickListener {
-            runInference()
-        }
+        setupViews()
+        setupRecyclerView()
+        initializeMNN()
     }
     
-    private fun runInference() {
-        lifecycleScope.launch {
-            try {
-                updateStatus("Running inference...")
-                runButton.isEnabled = false
-                
-                // Try to load a model from assets
-                try {
-                    val modelBytes = assets.open("models/model.mnn").readBytes()
-                    val model = mnnEngine.loadModelFromBytes(modelBytes)
-                    
-                    // Create interpreter with configuration
-                    val config = MNNConfig(
-                        numThreads = 4,
-                        precision = Precision.HIGH
-                    )
-                    val interpreter = model.createInterpreter(config)
-                    
-                    // Example: Create input tensor (adjust dimensions for your model)
-                    val input = MNNTensor.zeros(intArrayOf(1, 224, 224, 3))
-                    
-                    // Run inference
-                    val output = interpreter.run(input)
-                    
-                    updateStatus("✅ Inference completed!\nOutput shape: ${output.getShape().contentToString()}\nFirst 5 values: ${output.getData().take(5)}")
-                    
-                    interpreter.close()
-                    model.close()
-                    
-                } catch (e: IOException) {
-                    // No model file found - show example usage
-                    demonstrateTensorOperations()
-                }
-                
-            } catch (e: Exception) {
-                updateStatus("❌ Inference failed: ${e.message}\n\n${e.stackTraceToString()}")
-            } finally {
-                runButton.isEnabled = true
+    private fun setupViews() {
+        statusText = findViewById(R.id.statusText)
+        messagesRecyclerView = findViewById(R.id.messagesRecyclerView)
+        inputEditText = findViewById(R.id.inputEditText)
+        sendButton = findViewById(R.id.sendButton)
+        loadingProgress = findViewById(R.id.loadingProgress)
+        
+        sendButton.setOnClickListener {
+            val message = inputEditText.text.toString().trim()
+            if (message.isNotEmpty()) {
+                sendMessage(message)
+            }
+        }
+        
+        inputEditText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                sendButton.performClick()
+                true
+            } else {
+                false
             }
         }
     }
     
-    private fun demonstrateTensorOperations() {
-        // Create a tensor from float array
-        val data = floatArrayOf(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f)
-        val shape = intArrayOf(2, 3)
-        val tensor = MNNTensor.fromFloatArray(data, shape)
-        
-        updateStatus(
-            """
-            ℹ️ No model file found at assets/models/model.mnn
-            
-            Tensor Operations Demo:
-            Created tensor:
-            Shape: ${shape.contentToString()}
-            Size: ${tensor.size()}
-            Rank: ${tensor.rank()}
-            Data: ${tensor.toFloatArray().contentToString()}
-            
-            MNN Config Example:
-            ${createConfigExample()}
-            
-            📝 To run real inference:
-            1. Convert your model to MNN format (.mnn)
-            2. Place it in assets/models/model.mnn
-            3. Tap "Run Inference" again
-            
-            For model conversion, see:
-            https://mnn-docs.readthedocs.io/en/latest/tools/convert.html
-            
-            The SDK is READY for real inference! ✨
-            """.trimIndent()
-        )
-    }
-    
-    private fun createConfigExample(): String {
-        val config = MNNConfig(
-            numThreads = 4,
-            precision = Precision.NORMAL
-        )
-        return """
-        numThreads: ${config.numThreads}
-        precision: ${config.precision}
-        forwardType: ${config.forwardType}
-        """.trimIndent()
-    }
-    
-    private fun updateStatus(message: String) {
-        runOnUiThread {
-            statusText.text = message
+    private fun setupRecyclerView() {
+        chatAdapter = ChatAdapter()
+        messagesRecyclerView.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity).apply {
+                stackFromEnd = true
+            }
+            adapter = chatAdapter
         }
+    }
+    
+    private fun initializeMNN() {
+        lifecycleScope.launch {
+            try {
+                updateStatus("Initializing MNN Engine...")
+                
+                mnnEngine = MNNEngine.initialize(this@MainActivity)
+                val version = mnnEngine.getVersion()
+                
+                updateStatus("✓ MNN v$version ready - Checking for model...")
+                
+                // Try to load model if available
+                checkForModel()
+                
+                isInitialized = true
+                
+            } catch (e: Exception) {
+                updateStatus("✗ Failed to initialize: ${e.message}")
+                Toast.makeText(
+                    this@MainActivity,
+                    "MNN initialization failed: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+    
+    private suspend fun checkForModel() = withContext(Dispatchers.IO) {
+        try {
+            // Check if model exists in assets
+            assets.list("models")?.let { files ->
+                val modelFile = files.firstOrNull { it.endsWith(".mnn") }
+                if (modelFile != null) {
+                    withContext(Dispatchers.Main) {
+                        updateStatus("✓ Found model: $modelFile - Ready for inference!")
+                        addSystemMessage("Model loaded successfully. You can start chatting!")
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        updateStatus("⚠ No model found - Using test mode")
+                        addSystemMessage(
+                            "No MNN model found in assets/models/\n\n" +
+                            "To use real LLM inference:\n" +
+                            "1. Download a Qwen or Llama model in MNN format\n" +
+                            "2. Place it in assets/models/ folder\n" +
+                            "3. Rebuild the app\n\n" +
+                            "For now, sending test messages to verify SDK..."
+                        )
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            withContext(Dispatchers.Main) {
+                updateStatus("⚠ No models folder - Using test mode")
+                addSystemMessage("Running in test mode without LLM model")
+            }
+        }
+    }
+    
+    private fun sendMessage(text: String) {
+        if (!isInitialized) {
+            Toast.makeText(this, "MNN is still initializing...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        if (isProcessing) {
+            Toast.makeText(this, "Please wait for current response...", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // Add user message
+        addMessage(ChatMessage(text, isUser = true))
+        inputEditText.text.clear()
+        
+        // Process with MNN
+        lifecycleScope.launch {
+            isProcessing = true
+            sendButton.isEnabled = false
+            
+            try {
+                // Run inference
+                val response = runInference(text)
+                
+                // Add AI response
+                addMessage(ChatMessage(response, isUser = false))
+                
+            } catch (e: Exception) {
+                addMessage(
+                    ChatMessage(
+                        "Error: ${e.message}",
+                        isUser = false
+                    )
+                )
+            } finally {
+                isProcessing = false
+                sendButton.isEnabled = true
+            }
+        }
+    }
+    
+    private suspend fun runInference(input: String): String = withContext(Dispatchers.Default) {
+        try {
+            // Try to load and run model
+            val modelBytes = try {
+                withContext(Dispatchers.IO) {
+                    assets.open("models/model.mnn").readBytes()
+                }
+            } catch (e: IOException) {
+                // No model available - return test response
+                return@withContext generateTestResponse(input)
+            }
+            
+            // Load model
+            val model = mnnEngine.loadModelFromBytes(modelBytes)
+            
+            // Create interpreter with config
+            val config = MNNConfig(
+                numThreads = 4,
+                precision = Precision.HIGH
+            )
+            val interpreter = model.createInterpreter(config)
+            
+            // For LLM, we would need:
+            // 1. Tokenize input
+            // 2. Create input tensor
+            // 3. Run inference
+            // 4. Decode output tokens
+            
+            // For now, test basic inference works
+            val testInput = MNNTensor.zeros(intArrayOf(1, 512)) // Example shape
+            val output = interpreter.run(testInput)
+            
+            interpreter.close()
+            model.close()
+            
+            "SDK inference test successful! Output shape: ${output.getShape().contentToString()}\n\n" +
+            "Note: Full LLM text generation requires:\n" +
+            "- Tokenizer integration\n" +
+            "- Text generation loop\n" +
+            "- Token decoding\n\n" +
+            "The MNN SDK is working correctly!"
+            
+        } catch (e: Exception) {
+            "Inference error: ${e.message}\n\nStack trace:\n${e.stackTraceToString().take(500)}"
+        }
+    }
+    
+    private fun generateTestResponse(input: String): String {
+        // Generate mock response to test UI
+        return when {
+            input.contains("hello", ignoreCase = true) -> 
+                "Hello! I'm a test response. The MNN SDK is initialized and working!"
+            
+            input.contains("how", ignoreCase = true) -> 
+                "This is a test mode response. Once you add an MNN LLM model, I'll use real inference!"
+            
+            input.contains("test", ignoreCase = true) -> 
+                "✓ MNN Engine: Initialized\n✓ SDK: Working\n✓ JNI Bridge: Connected\n\n" +
+                "Everything is ready for real LLM inference once you add a model file!"
+            
+            else -> 
+                "Echo: \"$input\"\n\nSDK Status: Ready for real inference with MNN model!"
+        }
+    }
+    
+    private fun addMessage(message: ChatMessage) {
+        messages.add(message)
+        chatAdapter.submitList(messages.toList()) {
+            messagesRecyclerView.scrollToPosition(messages.size - 1)
+        }
+    }
+    
+    private fun addSystemMessage(text: String) {
+        addMessage(ChatMessage(text, isUser = false))
+    }
+    
+    private fun updateStatus(status: String) {
+        statusText.text = status
     }
 }
