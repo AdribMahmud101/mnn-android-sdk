@@ -1,5 +1,11 @@
 package com.mnn.sdk
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 
@@ -25,10 +31,30 @@ class MNNLlm private constructor(
     val supportsThinking: Boolean,
     /** True if the model was loaded with visual.mnn present (VLM capable). */
     val isVisual: Boolean
-) {
+) : java.io.Closeable {
 
     /** Format detected from llm_config.json prompt_template. */
     enum class ChatStyle { QWEN_CHATML, GENERIC }
+
+    /**
+     * Result of a single inference call — the clean assistant reply and the raw
+     * thinking content (non-null only when thinking was enabled and the model produced
+     * a `<think>…</think>` block).
+     */
+    data class LlmResult(val text: String, val thinking: String?)
+
+    /**
+     * Typed event emitted by [chatFlow]. Separates chain-of-thought tokens from answer
+     * tokens in real time so callers never need to parse `<think>` tags themselves.
+     */
+    sealed class ChatEvent {
+        /** A token generated inside the `<think>…</think>` block. */
+        data class ThinkingToken(val token: String) : ChatEvent()
+        /** A token that is part of the final answer. */
+        data class AnswerToken(val token: String) : ChatEvent()
+        /** Generation is complete. [result] contains the deduplicated full reply. */
+        data class Done(val result: LlmResult) : ChatEvent()
+    }
 
     data class Metrics(
         val prefillMs: Long,
@@ -66,6 +92,30 @@ class MNNLlm private constructor(
     var lastThinking: String? = null
         private set
 
+    /**
+     * Optional custom prompt builder. When set, completely overrides the built-in
+     * ChatML/Generic formatter for every [response], [chat], [responseFlow], and
+     * [chatFlow] call.
+     *
+     * Receives the current conversation history (read-only snapshot), the new user
+     * message, an optional image path, and the current [systemPrompt]; must return
+     * the complete raw prompt string to pass directly to the tokenizer.
+     *
+     * Useful for RAG context injection, few-shot examples, function-calling blocks,
+     * or any non-standard prompt format:
+     * ```kotlin
+     * llm.promptBuilder = { history, message, _, system ->
+     *     buildString {
+     *         append("<|im_start|>system\n$system\n\nContext: $retrievedContext<|im_end|>\n")
+     *         for ((u, a) in history)
+     *             append("<|im_start|>user\n$u<|im_end|>\n<|im_start|>assistant\n$a<|im_end|>\n")
+     *         append("<|im_start|>user\n$message<|im_end|>\n<|im_start|>assistant\n")
+     *     }
+     * }
+     * ```
+     */
+    var promptBuilder: ((history: List<Pair<String, String>>, userMessage: String, imagePath: String?, systemPrompt: String) -> String)? = null
+
     fun load(): Boolean {
         val ok = nativeLoad(handle)
         if (ok) {
@@ -87,7 +137,7 @@ class MNNLlm private constructor(
      * @param maxNewTokens Maximum tokens to generate.
      * @return The assistant's reply (thinking block stripped; access via [lastThinking]).
      */
-    fun response(userMessage: String, imagePath: String? = null, maxNewTokens: Int = 512): String {
+    fun response(userMessage: String, imagePath: String? = null, maxNewTokens: Int = 1024): String {
         // Track whether we injected <think> as an open prefix (so extractThinking knows
         // the raw output starts with thinking content, not a full <think>…</think> block).
         val thinkPrefixInjected = supportsThinking && enableThinking
@@ -141,8 +191,11 @@ class MNNLlm private constructor(
     /**
      * Build the full formatted prompt including system message, conversation history,
      * and the current user turn. Controls the assistant prefix for thinking mode.
+     * Delegates to [promptBuilder] when set.
      */
-    private fun buildPrompt(userMessage: String, imagePath: String?): String = buildString {
+    private fun buildPrompt(userMessage: String, imagePath: String?): String {
+        promptBuilder?.let { return it(history.toList(), userMessage, imagePath, systemPrompt) }
+        return buildString {
         when (chatStyle) {
             ChatStyle.QWEN_CHATML -> {
                 append("<|im_start|>system\n")
@@ -174,7 +227,147 @@ class MNNLlm private constructor(
                 append("User: $userMessage\nAssistant:")
             }
         }
+        }
     }
+
+    /**
+     * Typed streaming variant: emits [ChatEvent] tokens so thinking and answer content
+     * are separated in real time — no caller-side `<think>` state machine needed.
+     *
+     * ```kotlin
+     * llm.chatFlow("Solve this step by step: 14 * 37").collect { event ->
+     *     when (event) {
+     *         is MNNLlm.ChatEvent.ThinkingToken -> reasoningView.append(event.token)
+     *         is MNNLlm.ChatEvent.AnswerToken   -> answerView.append(event.token)
+     *         is MNNLlm.ChatEvent.Done          -> showMetrics(llm.lastMetrics())
+     *     }
+     * }
+     * ```
+     */
+    fun chatFlow(
+        userMessage: String,
+        imagePath: String? = null,
+        maxNewTokens: Int = 1024
+    ): Flow<ChatEvent> = callbackFlow {
+        val thinkPrefixInjected = supportsThinking && enableThinking
+        val fullPrompt = buildPrompt(userMessage, imagePath)
+        nativeReset(handle)
+
+        val accumulated = StringBuilder()
+        // When thinkPrefixInjected=true we start in thinking state immediately;
+        // otherwise we start in answer state and switch if the model emits <think>.
+        var inThinking = thinkPrefixInjected
+
+        nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
+            TokenCallback { token ->
+                accumulated.append(token)
+                when {
+                    token.contains("</think>") -> {
+                        // Flush any thinking content before the closing tag.
+                        val before = token.substringBefore("</think>")
+                        if (before.isNotEmpty() && inThinking) trySend(ChatEvent.ThinkingToken(before))
+                        inThinking = false
+                        val after = token.substringAfter("</think>")
+                        if (after.isNotEmpty()) trySend(ChatEvent.AnswerToken(after))
+                    }
+                    token.contains("<think>") -> {
+                        inThinking = true
+                        val after = token.substringAfter("<think>")
+                        if (after.isNotEmpty()) trySend(ChatEvent.ThinkingToken(after))
+                    }
+                    inThinking -> trySend(ChatEvent.ThinkingToken(token))
+                    else       -> trySend(ChatEvent.AnswerToken(token))
+                }
+            }
+        )
+
+        val raw = accumulated.toString().trim()
+        val (thinking, afterThink) = extractThinking(raw, thinkPrefixInjected)
+        lastThinking = thinking
+        val clean = afterThink
+            .let { if (stopString != null) it.removeSuffix(stopString) else it }
+            .removeSuffix("<|endoftext|>")
+            .trim()
+        history.add(Pair(userMessage, clean))
+        nativeSetGeneratedTokens(handle, clean.length / 4 + 1)
+        trySend(ChatEvent.Done(LlmResult(clean, thinking)))
+
+        close()
+        awaitClose()
+    }.flowOn(Dispatchers.IO)
+
+    /** Release native resources. Alias for [destroy]; enables `use { }` blocks. */
+    override fun close() = destroy()
+
+    /**
+     * Coroutine-friendly wrapper: runs [response] on [Dispatchers.IO] and returns the
+     * reply together with the thinking content in a single [LlmResult].
+     *
+     * ```kotlin
+     * val result = llm.chat("What is 2+2?")
+     * println(result.text)     // "4"
+     * println(result.thinking) // chain-of-thought, or null
+     * ```
+     */
+    suspend fun chat(
+        userMessage: String,
+        imagePath: String? = null,
+        maxNewTokens: Int = 1024
+    ): LlmResult = withContext(Dispatchers.IO) {
+        val text = response(userMessage, imagePath, maxNewTokens)
+        LlmResult(text, lastThinking)
+    }
+
+    /**
+     * Token-streaming variant: returns a cold [Flow] that emits each decoded token as
+     * it is generated. The flow runs on [Dispatchers.IO] — collect on any thread.
+     *
+     * After the flow completes, [lastThinking] is populated as usual.
+     *
+     * ```kotlin
+     * llm.responseFlow("Tell me a story").collect { token ->
+     *     textView.append(token)  // update UI every token
+     * }
+     * ```
+     *
+     * Note: raw output is streamed (including the `<think>…</think>` block when
+     * thinking is enabled). [lastThinking] is extracted after the flow closes.
+     */
+    fun responseFlow(
+        userMessage: String,
+        imagePath: String? = null,
+        maxNewTokens: Int = 1024
+    ): Flow<String> = callbackFlow {
+        val thinkPrefixInjected = supportsThinking && enableThinking
+        val fullPrompt = buildPrompt(userMessage, imagePath)
+        nativeReset(handle)
+
+        val accumulated = StringBuilder()
+        // nativeResponseStreaming blocks this IO thread, calling the lambda once per
+        // decoded token. trySend is non-suspending and safe from within the callback.
+        nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
+            TokenCallback { token ->
+                accumulated.append(token)
+                trySend(token)
+            }
+        )
+
+        // Post-completion: extract thinking, update history, set metrics.
+        val raw = accumulated.toString().trim()
+        val (thinking, afterThink) = extractThinking(raw, thinkPrefixInjected)
+        lastThinking = thinking
+        val clean = afterThink
+            .let { if (stopString != null) it.removeSuffix(stopString) else it }
+            .removeSuffix("<|endoftext|>")
+            .trim()
+        history.add(Pair(userMessage, clean))
+        // Rough token counts from accumulated text length.
+        val genTokens = (clean.length / 4 + 1)
+        nativeSetGeneratedTokens(handle, genTokens)
+
+        close()
+        awaitClose()
+    }.flowOn(Dispatchers.IO)
 
     /** Clear conversation history and KV-cache. */
     fun clearHistory() {
@@ -198,6 +391,40 @@ class MNNLlm private constructor(
         init {
             System.loadLibrary("llm")
             System.loadLibrary("mnn-jni-bridge")
+        }
+
+        /**
+         * SAM interface used by [responseFlow] to receive tokens from the native layer.
+         * Declared here so JNI can look up `onToken(Ljava/lang/String;)V` on the object.
+         */
+        fun interface TokenCallback {
+            fun onToken(token: String)
+        }
+
+        /**
+         * Single-step coroutine factory: creates AND loads the model on [Dispatchers.IO].
+         *
+         * This is the preferred entry point for new code:
+         * ```kotlin
+         * val llm = MNNLlm.load("/path/to/llm_config.json")
+         * val result = llm.chat("Hello!")
+         * ```
+         *
+         * @throws IllegalArgumentException if the config path is invalid or native create fails.
+         * @throws IllegalStateException if the model weights fail to load.
+         */
+        suspend fun load(configPath: String): MNNLlm = withContext(Dispatchers.IO) {
+            val llm = create(configPath)
+                ?: throw IllegalArgumentException(
+                    "Failed to create LLM — check that '$configPath' exists and is valid JSON"
+                )
+            if (!llm.load()) {
+                llm.destroy()
+                throw IllegalStateException(
+                    "Failed to load model weights — files may be corrupt or missing"
+                )
+            }
+            llm
         }
 
         fun create(configPath: String): MNNLlm? {
@@ -253,8 +480,10 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeCreate(configPath: String): Long
         @JvmStatic private external fun nativeLoad(handle: Long): Boolean
         @JvmStatic private external fun nativeResponse(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?): String
+        @JvmStatic private external fun nativeResponseStreaming(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?, callback: TokenCallback)
         @JvmStatic private external fun nativeReset(handle: Long)
         @JvmStatic private external fun nativeSetConfig(handle: Long, configJson: String)
+        @JvmStatic private external fun nativeSetGeneratedTokens(handle: Long, count: Int)
         @JvmStatic private external fun nativeDestroy(handle: Long)
         @JvmStatic private external fun nativeGetPrefillMs(handle: Long): Long
         @JvmStatic private external fun nativeGetDecodeMs(handle: Long): Long

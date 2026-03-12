@@ -27,7 +27,6 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.mnn.sdk.MNNEngine
 import com.mnn.sdk.MNNLlm
 import java.io.File
 import java.io.FileOutputStream
@@ -64,7 +63,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chatAdapter: ChatAdapter
     private val messages = mutableListOf<ChatMessage>()
 
-    private lateinit var mnnEngine: MNNEngine
     private lateinit var advancedDownloader: AdvancedModelDownloader
     private var modelCatalog: ModelCatalog? = null
     private var isInitialized = false
@@ -209,27 +207,9 @@ class MainActivity : AppCompatActivity() {
     
     private fun initializeMNN() {
         lifecycleScope.launch {
-            try {
-                updateStatus("Initializing MNN Engine...")
-                
-                mnnEngine = MNNEngine.initialize(this@MainActivity)
-                val version = mnnEngine.getVersion()
-                
-                updateStatus("✓ MNN v$version ready")
-                
-                // Check for downloaded models
-                checkForModels()
-                
-                isInitialized = true
-                
-            } catch (e: Exception) {
-                updateStatus("✗ Failed to initialize: ${e.message}")
-                Toast.makeText(
-                    this@MainActivity,
-                    "MNN initialization failed: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+            updateStatus("✓ MNN ready")
+            checkForModels()
+            isInitialized = true
         }
     }
     
@@ -290,15 +270,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val llm = MNNLlm.create(configFile.absolutePath)
-        if (llm == null) {
-            withContext(Dispatchers.Main) { updateStatus("✗ Failed to create LLM for $name") }
-            return@withContext
-        }
-        val ok = llm.load()
-        if (!ok) {
-            llm.destroy()
-            withContext(Dispatchers.Main) { updateStatus("✗ Failed to load LLM weights for $name") }
+        val llm = try {
+            MNNLlm.load(configFile.absolutePath)
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) { updateStatus("✗ Failed to load $name: ${e.message}") }
             return@withContext
         }
         activeLlm = llm
@@ -393,8 +368,7 @@ class MainActivity : AppCompatActivity() {
             // Run inference – pass imagePath only if model is visual
             val response = llm.response(
                 userMessage = input.ifBlank { "Describe the image." },
-                imagePath = if (llm.isVisual) imagePath else null,
-                maxNewTokens = 512
+                imagePath = if (llm.isVisual) imagePath else null
             )
 
             // Log chain-of-thought if present

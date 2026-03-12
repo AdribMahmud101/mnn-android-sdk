@@ -9,9 +9,11 @@
 [![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
 [![MNN](https://img.shields.io/badge/MNN-LLM-blueviolet.svg)](https://github.com/alibaba/MNN)
 
-**A Kotlin Android SDK for on-device LLM inference powered by [MNN](https://github.com/alibaba/MNN) (Alibaba's Mobile Neural Network framework).**
+**A plug-and-play Kotlin Android SDK for on-device LLM inference powered by [MNN](https://github.com/alibaba/MNN) (Alibaba's Mobile Neural Network framework).**
 
-Supports multi-turn chat, chain-of-thought thinking, vision/multimodal input, automatic model downloading, and real-time performance metrics — all running fully on-device.
+Drop it in, call `MNNLlm.load(configPath)`, and you have a fully coroutine-native, streaming, multi-turn LLM — no boilerplate, no manual thread management, no native lifecycle to manage.
+
+Supports multi-turn chat, chain-of-thought thinking, vision/multimodal input, token streaming, prompt customisation, automatic model downloading, and real-time performance metrics — all running fully on-device.
 
 </div>
 
@@ -19,13 +21,18 @@ Supports multi-turn chat, chain-of-thought thinking, vision/multimodal input, au
 
 ## Features
 
+- **Plug-and-play** — One suspend call to load. One suspend call to chat. Zero setup ceremony.
+- **Token Streaming** — `chatFlow()` and `responseFlow()` emit tokens in real time via a real C++ callback streambuf — no polling, no blocking UI
+- **Typed Streaming** — `ChatFlow` emits `ThinkingToken` / `AnswerToken` / `Done` events so thinking and answer are separated automatically — no `<think>` tag parsing in your UI code
+- **Coroutine-native** — `chat()` and `MNNLlm.load()` are `suspend` functions that dispatch to `Dispatchers.IO` internally; collect flows on any thread
+- **`Closeable`** — use `llm.use { }` blocks; native memory cannot leak
+- **Prompt Customisation** — Set `promptBuilder` to inject RAG context, few-shot examples, or tool results without touching SDK internals
 - **LLM Chat** — Multi-turn conversations with any MNN-format LLM (Qwen2.5, Qwen3, Qwen3.5, etc.)
-- **Thinking Mode** — Toggle chain-of-thought reasoning on/off per message (Qwen3/Qwen3.5 style `<think>` blocks)
+- **Thinking Mode** — Toggle chain-of-thought reasoning on/off per message (Qwen3/Qwen3.5 `<think>` budget-forcing)
 - **Vision / VLM** — Send images alongside text to multimodal models (Qwen3.5-VL)
-- **Model Downloader** — Fetch models directly from HuggingFace or ModelScope with live progress
+- **Model Downloader** — Fetch models from HuggingFace or ModelScope with live progress
 - **Auto Model Repair** — Detects and re-downloads missing files (embeddings, visual weights) before inference
 - **Performance Metrics** — Prefill speed, decode speed, tokens/sec after every response
-- **Model Management** — List, load, switch, and delete downloaded models at runtime
 - **Full JNI Bridge** — Direct C++ bindings to `MNN::Transformer::Llm`, no overhead layer
 
 ---
@@ -36,8 +43,8 @@ Supports multi-turn chat, chain-of-thought thinking, vision/multimodal input, au
 mnn_android_sdk/
 ├── mnn-sdk/                          # Core SDK (Android library module)
 │   ├── src/main/kotlin/com/mnn/sdk/
-│   │   ├── MNNLlm.kt                 # ← Main LLM wrapper (chat, thinking, vision)
-│   │   ├── MNNEngine.kt              # MNN runtime initialisation
+│   │   ├── MNNLlm.kt                 # ← Main LLM wrapper (chat, streaming, thinking, vision)
+│   │   ├── MNNEngine.kt              # MNN runtime for generic (non-LLM) inference
 │   │   ├── MNNConfig.kt              # Inference configuration (threads, backend)
 │   │   ├── MNNInterpreter.kt         # General-purpose inference session
 │   │   ├── MNNModel.kt               # Model loading helpers
@@ -45,12 +52,10 @@ mnn_android_sdk/
 │   ├── src/main/cpp/
 │   │   ├── mnn_llm.cpp               # JNI bridge → MNN::Transformer::Llm
 │   │   ├── CMakeLists.txt
-│   │   └── include/llm/llm.hpp       # Minimal MNN LLM header (vtable-matched)
+│   │   └── include/llm/llm.hpp       # MNN LLM header (vtable-matched)
 │   └── src/main/jniLibs/             # Pre-built MNN native libraries
 │       ├── arm64-v8a/                # libMNN.so, libllm.so, libMNN_Express.so …
-│       ├── armeabi-v7a/
-│       ├── x86/
-│       └── x86_64/
+│       └── armeabi-v7a/
 └── sample/                           # Demo chat app
     └── src/main/kotlin/com/mnn/sample/
         ├── MainActivity.kt           # Chat UI + model management
@@ -67,8 +72,6 @@ mnn_android_sdk/
 
 ### 1. Add the SDK
 
-The SDK is an Android library module. Include it in your project:
-
 ```kotlin
 // settings.gradle.kts
 include(":mnn-sdk")
@@ -81,70 +84,95 @@ dependencies {
 }
 ```
 
-Or build and publish the AAR locally:
+Or build and use the AAR directly:
 
 ```bash
 ./gradlew :mnn-sdk:assembleRelease
 # Output: mnn-sdk/build/outputs/aar/mnn-sdk-release.aar
 ```
 
-### 2. Initialize
+### 2. Load a model — one line
 
 ```kotlin
-val engine = MNNEngine.initialize(context)
+// suspend — dispatches to IO internally, throws with a clear message on failure
+val llm = MNNLlm.load("/data/user/0/com.example/files/models/Qwen3-0.6B-MNN/llm_config.json")
 ```
 
-### 3. Load a model
+No `MNNEngine.initialize()`. No two-step create + load. No null check. Just load and chat.
+
+### 3. Chat
 
 ```kotlin
-val llm = MNNLlm.create("/data/user/0/com.example/files/models/Qwen3.5-0.8B-MNN/llm_config.json")
-    ?: error("Failed to create LLM")
-val loaded = llm.load()   // blocks — call on a background thread
-```
+// One-shot — returns text + thinking together
+val result = llm.chat("What is the capital of France?")
+println(result.text)      // "Paris"
+println(result.thinking)  // chain-of-thought block, or null
 
-### 4. Chat
-
-```kotlin
-// Simple text
-val reply = llm.response("What is the capital of France?")
-
-// With thinking enabled (Qwen3/Qwen3.5 models)
+// With thinking enabled
 llm.enableThinking = true
-val reply = llm.response("Explain quantum entanglement.")
-println("Reasoning: ${llm.lastThinking}")
-println("Answer:    $reply")
+val result = llm.chat("Explain quantum entanglement.")
 
-// With image (VLM models)
-val reply = llm.response("Describe this image.", imagePath = "/sdcard/photo.jpg")
+// With image (VLM models only)
+val result = llm.chat("Describe this image.", imagePath = "/sdcard/photo.jpg")
 ```
 
-### 5. Clean up
+### 4. Stream tokens — thinking and answer separated
 
 ```kotlin
-llm.clearHistory()   // Reset conversation without unloading the model
-llm.destroy()        // Free native resources
+llm.chatFlow("Solve step by step: 14 × 37").collect { event ->
+    when (event) {
+        is MNNLlm.ChatEvent.ThinkingToken -> reasoningView.append(event.token)
+        is MNNLlm.ChatEvent.AnswerToken   -> answerView.append(event.token)
+        is MNNLlm.ChatEvent.Done          -> showMetrics(llm.lastMetrics())
+    }
+}
+```
+
+### 5. Customise the prompt (RAG, tools, few-shot)
+
+```kotlin
+llm.promptBuilder = { history, message, _, system ->
+    buildString {
+        append("<|im_start|>system\n$system\n\nContext: $retrievedDocs<|im_end|>\n")
+        for ((u, a) in history)
+            append("<|im_start|>user\n$u<|im_end|>\n<|im_start|>assistant\n$a<|im_end|>\n")
+        append("<|im_start|>user\n$message<|im_end|>\n<|im_start|>assistant\n")
+    }
+}
+```
+
+### 6. Clean up — or let `use {}` do it
+
+```kotlin
+llm.clearHistory()   // Reset conversation without unloading
+llm.close()          // Free native resources (same as destroy())
+
+// Or idiomatically:
+MNNLlm.load(configPath).use { llm ->
+    println(llm.chat("Hello!").text)
+}   // native memory freed automatically here
 ```
 
 ---
 
 ## `MNNLlm` API Reference
 
-### Factory
+### Factory methods
 
 ```kotlin
-MNNLlm.create(configPath: String): MNNLlm?
+// Preferred: single suspend call — loads and warms up the model on Dispatchers.IO
+// Throws IllegalArgumentException if config is invalid, IllegalStateException if weights fail
+suspend fun MNNLlm.Companion.load(configPath: String): MNNLlm
+
+// Low-level: create handle without loading weights (use when you need two-step control)
+fun MNNLlm.Companion.create(configPath: String): MNNLlm?
+fun MNNLlm.load(): Boolean
 ```
 
-Reads `llm_config.json` to auto-detect:
-- **Chat format** — `QWEN_CHATML` (detected from `prompt_template`, `user_prompt_template`, or `jinja.chat_template`) or `GENERIC`
+`MNNLlm.load()` auto-detects from `llm_config.json`:
+- **Chat format** — `QWEN_CHATML` (from `prompt_template`, `user_prompt_template`, or `jinja.chat_template`) or `GENERIC`
 - **`supportsThinking`** — true when model has `thinking_template`, `enable_thinking`, or `<think>` in its jinja template
 - **`isVisual`** — true when `is_visual=true` in config **and** `visual.mnn` is present on disk
-
-```kotlin
-llm.load(): Boolean
-```
-
-Loads model weights into memory. Automatically calls `set_config({"use_template":false})` so MNN's internal template engine is bypassed and our fully-formatted prompts are passed through directly.
 
 ### Properties
 
@@ -152,38 +180,71 @@ Loads model weights into memory. Automatically calls `set_config({"use_template"
 |---|---|---|
 | `supportsThinking` | `Boolean` (read-only) | Whether this model supports `<think>` reasoning blocks |
 | `isVisual` | `Boolean` (read-only) | Whether this model can process images |
-| `enableThinking` | `Boolean` | Toggle thinking mode for the **next** `response()` call |
+| `enableThinking` | `Boolean` | Toggle thinking mode for the next inference call |
 | `systemPrompt` | `String` | System prompt prepended to every conversation |
 | `lastThinking` | `String?` (read-only) | Raw thinking block from the last `response()` call |
+| `promptBuilder` | `((history, message, imagePath, system) -> String)?` | When set, completely overrides built-in prompt formatting |
 
-### Methods
+### Inference methods
 
 ```kotlin
-// Run inference (blocking — call on Dispatchers.IO)
+// Coroutine — suspend, dispatches to IO, returns text + thinking together
+suspend fun chat(
+    userMessage: String,
+    imagePath: String? = null,
+    maxNewTokens: Int = 1024
+): LlmResult   // data class: text: String, thinking: String?
+
+// Typed streaming — emits ThinkingToken / AnswerToken / Done events
+// thinking and answer are separated by the SDK — no <think> parsing needed
+fun chatFlow(
+    userMessage: String,
+    imagePath: String? = null,
+    maxNewTokens: Int = 1024
+): Flow<ChatEvent>
+
+// Raw streaming — emits every decoded token as a plain String (includes <think> tags raw)
+fun responseFlow(
+    userMessage: String,
+    imagePath: String? = null,
+    maxNewTokens: Int = 1024
+): Flow<String>
+
+// Blocking — call on Dispatchers.IO; returns clean answer, sets lastThinking as side-effect
 fun response(
     userMessage: String,
-    imagePath: String? = null,   // absolute path; only used when isVisual = true
-    maxNewTokens: Int = 512
+    imagePath: String? = null,
+    maxNewTokens: Int = 1024
 ): String
-
-// Clear conversation history and KV-cache
-fun clearHistory()
-
-// Performance metrics from the last response() call
-fun lastMetrics(): Metrics   // prefillMs, decodeMs, promptTokens, generatedTokens, tokensPerSec
-
-// Free native resources
-fun destroy()
 ```
 
-### Thinking Behaviour
+### `ChatEvent` sealed class
 
-| `enableThinking` | Prompt suffix injected | Expected output |
+```kotlin
+sealed class ChatEvent {
+    data class ThinkingToken(val token: String) : ChatEvent()  // inside <think>…</think>
+    data class AnswerToken(val token: String)   : ChatEvent()  // final answer content
+    data class Done(val result: LlmResult)      : ChatEvent()  // generation complete
+}
+```
+
+### Lifecycle
+
+```kotlin
+fun clearHistory()          // Reset conversation + KV-cache; model stays loaded
+fun destroy()               // Free native resources
+override fun close()        // Alias for destroy(); enables use {} blocks
+fun lastMetrics(): Metrics  // prefillMs, decodeMs, promptTokens, generatedTokens, tokensPerSec
+```
+
+### Thinking behaviour
+
+| `enableThinking` | Prompt suffix injected | Output |
 |---|---|---|
-| `true` | `<\|im_start\|>assistant\n<think>\n` | `reasoning…</think>\nanswer` |
-| `false` | `<\|im_start\|>assistant\n<think>\n\n</think>\n` | `answer` (thinking skipped via budget-forcing) |
+| `true` | `<\|im_start\|>assistant\n<think>\n` | reasoning…`</think>`\nanswer |
+| `false` | `<\|im_start\|>assistant\n<think>\n\n</think>\n` | answer only (budget-forcing) |
 
-`lastThinking` is always `null` when `enableThinking = false`. The returned string from `response()` is always the **clean answer only** — the think block is stripped automatically.
+`chat()` and `chatFlow(Done)` always return the **clean answer** — thinking is stripped automatically. `chatFlow(ThinkingToken)` gives you the reasoning tokens in real time.
 
 ---
 
@@ -196,7 +257,6 @@ val downloader = AdvancedModelDownloader(context)
 
 // Download a model
 downloader.downloadModel(modelItem, preferredSource = "HuggingFace")
-    .flowOn(Dispatchers.IO)
     .collect { state ->
         when (state) {
             is DownloadState.Downloading -> println("${state.progress}% — ${state.currentFile}")
@@ -209,21 +269,19 @@ downloader.downloadModel(modelItem, preferredSource = "HuggingFace")
 // Get all fully-downloaded models (checks required files per ModelProfile)
 val configs: List<File> = downloader.getDownloadedModels()
 
-// Re-download any missing files for an already-present model
+// Re-download any missing files for an existing model directory
 downloader.repairMissingFiles(modelDir).collect { ... }
 
 // Delete a model
 downloader.deleteModel(modelDir.absolutePath)
 ```
 
-### ModelProfile
+### ModelProfile — required files per model
 
-Downloaded file sets are computed dynamically from `llm_config.json`:
-
-| Config field | Files added |
+| Config field | Files required |
 |---|---|
 | `tie_embeddings` present | No extra embedding file needed |
-| `tie_embeddings` absent | `embeddings_bf16.bin`, `embeddings.bin` (optional probe) |
+| `tie_embeddings` absent | `embeddings_bf16.bin` (+ `embeddings.bin` probed optionally) |
 | `is_visual = true` + `visual.mnn` on server | `visual.mnn`, `visual.mnn.weight`, `vit_config.json` (optional) |
 | `is_audio = true` | `audio_encoder.mnn`, `audio_encoder.mnn.weight` |
 | `embedding_file` set | That file added as required |
@@ -245,21 +303,19 @@ If `visual.mnn` is not available on the server the config is patched to `is_visu
 
 ```bash
 # Build debug APK for the sample app
-./gradlew :sample:assembleDebug
+unset JAVA_HOME && ./gradlew :sample:assembleDebug
 
 # Build release AAR of the SDK only
 ./gradlew :mnn-sdk:assembleRelease
 
-# Install sample app to connected device
-./gradlew :sample:installDebug
-# or
+# Install to connected device
 adb install -r sample/build/outputs/apk/debug/sample-debug.apk
 
 # Publish SDK to Maven Local
 ./gradlew :mnn-sdk:publishToMavenLocal
 ```
 
-> **Note:** `unset JAVA_HOME` before running Gradle if you have a system JDK conflicting with the Android Studio toolchain.
+> **Note:** `unset JAVA_HOME` before running Gradle if you see toolchain conflicts with a system JDK.
 
 ---
 
@@ -286,9 +342,33 @@ MNN's `Llm::response(string)` calls `applyTemplate()` internally when `use_templ
 
 Images are injected as `<img>/absolute/path/to/image</img>` immediately before the user's text in the current turn. MNN's `Omni` VLM subclass tokenises this tag by running the vision encoder inside its `tokenizer_encode()` — which requires the `ExecutorScope` set up by `response(string)`. This is why we use `response(string)` (not bare `tokenizer_encode` + `response(vector<int>)`) even after disabling the template.
 
+### Token Streaming
+
+`chatFlow()` / `responseFlow()` are backed by a `CallbackStreambuf` in C++ (`mnn_llm.cpp`) that fires a `TokenCallback.onToken(String)` JNI call for each chunk written by `MNN::Transformer::Llm::response()`. This means tokens arrive as the model decodes them — no buffering, no polling. The Kotlin side uses `callbackFlow { }` + `trySend()` so collection is safe from any thread.
+
 ### Multi-Turn History
 
 Full ChatML is rebuilt from scratch on every call and the KV-cache is reset via `nativeReset()`. The assistant reply stored in history is always the **clean** reply — the `<think>…</think>` block is stripped before being saved, so reasoning never bleeds into subsequent turns.
+
+---
+
+## Known Caveats & Roadmap
+
+These are the current limitations. Contributions welcome.
+
+- **[ ] KV-cache not reused across turns** — The entire prompt (system + all history + new message) is re-prefilled on every call. This is correct and simple, but means prefill time grows linearly with conversation length. A proper incremental KV-cache would fix this but requires MNN to expose a session-continuation API.
+
+- **[ ] Token count metrics are estimated, not exact** — `promptTokens` and `generatedTokens` in `Metrics` are approximated as `text.length / 4`. MNN does not expose a `tokenize()` count API from `Llm`. Exact counts would require a separate `tokenize()` JNI call before and after inference.
+
+- **[ ] `responseFlow()` streams raw `<think>` tags** — When thinking is enabled, `responseFlow()` emits thinking tokens and answer tokens in the same stream without labelling them. Use `chatFlow()` instead — it separates them into typed `ThinkingToken` / `AnswerToken` events automatically.
+
+- **[ ] `promptBuilder` owns history formatting entirely** — When `promptBuilder` is set, the SDK passes a read-only `List<Pair<String,String>>` snapshot but the caller is responsible for including it in the output string. If history is omitted in the custom builder, the model loses context. This is intentional (full control) but easy to get wrong.
+
+- **[ ] No cancellation support in streaming** — Cancelling the coroutine that collects `chatFlow()` / `responseFlow()` does not interrupt the underlying `nativeResponseStreaming()` C++ call, which runs to completion on its IO thread. Proper cancellation would require MNN to expose a `llm->stop()` API.
+
+- **[ ] ChatML / GENERIC are the only built-in formats** — Models using Llama-3, Phi, Mistral, Gemma, or other non-ChatML prompt formats will fall back to the `GENERIC` (`User: … Assistant:`) format, which is suboptimal. Use `promptBuilder` to override for these models until proper auto-detection is added.
+
+- **[ ] `MNNEngine` is not required for LLM use** — `MNNEngine` is a separate class for generic (non-LLM) MNN inference. `MNNLlm` loads its own native libraries independently. If you are only doing LLM chat you do not need to call `MNNEngine.initialize()` at all.
 
 ---
 
