@@ -358,7 +358,7 @@ These are the current limitations. Contributions welcome.
 
 - **[ ] KV-cache not reused across turns** — The entire prompt (system + all history + new message) is re-prefilled on every call. This is correct and simple, but means prefill time grows linearly with conversation length. A proper incremental KV-cache would fix this but requires MNN to expose a session-continuation API.
 
-- **[ ] Token count metrics are estimated, not exact** — `promptTokens` and `generatedTokens` in `Metrics` are approximated as `text.length / 4`. MNN does not expose a `tokenize()` count API from `Llm`. Exact counts would require a separate `tokenize()` JNI call before and after inference.
+- **[x] Token count metrics are exact** — `promptTokens` and `generatedTokens` are now computed using JNI tokenization (`llm->tokenizer_encode(text).size()`) via `nativeCountTokens`, replacing all prior `length / 4` estimates.
 
 - **[ ] `responseFlow()` streams raw `<think>` tags** — When thinking is enabled, `responseFlow()` emits thinking tokens and answer tokens in the same stream without labelling them. Use `chatFlow()` instead — it separates them into typed `ThinkingToken` / `AnswerToken` events automatically.
 

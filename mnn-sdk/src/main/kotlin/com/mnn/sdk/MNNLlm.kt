@@ -157,6 +157,8 @@ class MNNLlm private constructor(
             .removeSuffix("<|endoftext|>")
             .trim()
 
+        updateExactTokenMetrics(fullPrompt, clean)
+
         // Only the clean answer is stored in history (no think block in replay prompts).
         history.add(Pair(userMessage, clean))
         return clean
@@ -289,7 +291,7 @@ class MNNLlm private constructor(
             .removeSuffix("<|endoftext|>")
             .trim()
         history.add(Pair(userMessage, clean))
-        nativeSetGeneratedTokens(handle, clean.length / 4 + 1)
+        updateExactTokenMetrics(fullPrompt, clean)
         trySend(ChatEvent.Done(LlmResult(clean, thinking)))
 
         close()
@@ -361,9 +363,7 @@ class MNNLlm private constructor(
             .removeSuffix("<|endoftext|>")
             .trim()
         history.add(Pair(userMessage, clean))
-        // Rough token counts from accumulated text length.
-        val genTokens = (clean.length / 4 + 1)
-        nativeSetGeneratedTokens(handle, genTokens)
+        updateExactTokenMetrics(fullPrompt, clean)
 
         close()
         awaitClose()
@@ -374,6 +374,20 @@ class MNNLlm private constructor(
         history.clear()
         lastThinking = null
         nativeReset(handle)
+    }
+
+    private fun updateExactTokenMetrics(prompt: String, cleanGenerated: String) {
+        val promptTokens = safeCountTokens(prompt)
+        if (promptTokens != null) nativeSetPromptTokens(handle, promptTokens)
+
+        val generatedTokens = safeCountTokens(cleanGenerated)
+        if (generatedTokens != null) nativeSetGeneratedTokens(handle, generatedTokens)
+    }
+
+    private fun safeCountTokens(text: String): Int? = try {
+        TokenCountUtils.normalizeCount(nativeCountTokens(handle, text))
+    } catch (_: Throwable) {
+        null
     }
 
     /** Release native resources. Call when done. */
@@ -483,7 +497,9 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeResponseStreaming(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?, callback: TokenCallback)
         @JvmStatic private external fun nativeReset(handle: Long)
         @JvmStatic private external fun nativeSetConfig(handle: Long, configJson: String)
+        @JvmStatic private external fun nativeSetPromptTokens(handle: Long, count: Int)
         @JvmStatic private external fun nativeSetGeneratedTokens(handle: Long, count: Int)
+        @JvmStatic private external fun nativeCountTokens(handle: Long, text: String): Int
         @JvmStatic private external fun nativeDestroy(handle: Long)
         @JvmStatic private external fun nativeGetPrefillMs(handle: Long): Long
         @JvmStatic private external fun nativeGetDecodeMs(handle: Long): Long

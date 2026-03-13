@@ -2,6 +2,7 @@
 #include <string>
 #include <sstream>
 #include <chrono>
+#include <exception>
 #include <android/log.h>
 
 #include "llm/llm.hpp"
@@ -139,14 +140,15 @@ Java_com_mnn_sdk_MNNLlm_nativeResponse(JNIEnv* env, jclass /*cls*/,
 
     std::string result = oss.str();
 
-    // Rough token estimates (4 chars ≈ 1 token).
-    s->prompt_tokens     = static_cast<int>(prompt.size() / 4 + 1);
-    s->generated_tokens  = static_cast<int>(result.size() / 4 + 1);
+    // Token counters are set from Kotlin using nativeCountTokens() on the
+    // exact prompt and clean generated answer text.
+    s->prompt_tokens     = 0;
+    s->generated_tokens  = 0;
     // Split time roughly 30% prefill / 70% decode
     s->prefill_ms = total_ms * 30 / 100;
     s->decode_ms  = total_ms * 70 / 100;
 
-    LOGI("response(): %lld ms, ~%d tokens out", (long long)total_ms, s->generated_tokens);
+    LOGI("response(): %lld ms", (long long)total_ms);
 
     return env->NewStringUTF(result.c_str());
 }
@@ -183,9 +185,36 @@ Java_com_mnn_sdk_MNNLlm_nativeDestroy(JNIEnv* /*env*/, jclass /*cls*/, jlong han
 
 // ---- Metric accessors ----
 JNIEXPORT void JNICALL
+Java_com_mnn_sdk_MNNLlm_nativeSetPromptTokens(JNIEnv*, jclass, jlong handle, jint count) {
+    LlmSession* s = toSession(handle);
+    if (s) s->prompt_tokens = static_cast<int>(count);
+}
+
+JNIEXPORT void JNICALL
 Java_com_mnn_sdk_MNNLlm_nativeSetGeneratedTokens(JNIEnv*, jclass, jlong handle, jint count) {
     LlmSession* s = toSession(handle);
     if (s) s->generated_tokens = static_cast<int>(count);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_mnn_sdk_MNNLlm_nativeCountTokens(JNIEnv* env, jclass, jlong handle, jstring jText) {
+    LlmSession* s = toSession(handle);
+    if (!s || !s->llm || jText == nullptr) return -1;
+
+    const char* textCStr = env->GetStringUTFChars(jText, nullptr);
+    std::string text(textCStr ? textCStr : "");
+    if (textCStr) env->ReleaseStringUTFChars(jText, textCStr);
+
+    try {
+        auto ids = s->llm->tokenizer_encode(text);
+        return static_cast<jint>(ids.size());
+    } catch (const std::exception& e) {
+        LOGE("nativeCountTokens exception: %s", e.what());
+        return -1;
+    } catch (...) {
+        LOGE("nativeCountTokens unknown exception");
+        return -1;
+    }
 }
 
 JNIEXPORT jlong JNICALL

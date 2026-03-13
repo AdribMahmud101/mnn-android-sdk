@@ -1,103 +1,201 @@
-# MNN SDK - Full Integration Tasks
+# MNN Android SDK — Task Tracker
 
-**Original Goal**: Building an SDK for Kotlin Android for MNN  
-**MNN Repository**: https://github.com/alibaba/MNN
+**Goal**: Production-quality, plug-and-play Kotlin Android SDK for on-device LLM inference via [MNN](https://github.com/alibaba/MNN).  
+**Repo**: `git@github.com:AdribMahmud101/mnn-android-sdk.git` — branch `master`  
+**Last push**: `98a1e4c` — dx: plug-and-play API (streaming, ChatEvent, Closeable, promptBuilder)
 
-## Pre-Publishing Checklist
+---
 
-### Phase 1: Native Libraries ⏳
-- [ ] Decide: Build MNN from source OR download pre-built binaries
-- [ ] Obtain libMNN.so for all ABIs (arm64-v8a, armeabi-v7a, x86, x86_64)
-- [ ] Copy .so files to `mnn-sdk/src/main/jniLibs/<abi>/`
-- [ ] Copy MNN C++ headers to `mnn-sdk/src/main/cpp/include/MNN/`
-- [ ] Verify file sizes and integrity
+## Completed ✅
 
-### Phase 2: JNI Bridge Implementation ⏳
-- [ ] Create `mnn-sdk/src/main/cpp/CMakeLists.txt`
-- [ ] Configure CMake to link MNN library
-- [ ] Implement `mnn_engine.cpp` (model loading, version, cleanup)
-- [ ] Implement `mnn_tensor.cpp` (data transfer, shape queries)
-- [ ] Implement `mnn_interpreter.cpp` (session management, inference)
-- [ ] Add logging and error handling in native code
-- [ ] Update `mnn-sdk/build.gradle.kts` with externalNativeBuild config
+### Foundation
+- [x] Pre-built MNN native libraries bundled (`arm64-v8a`, `armeabi-v7a`) — `libMNN.so`, `libllm.so`, `libMNN_Express.so`, etc.
+- [x] JNI bridge `mnn_llm.cpp` — `nativeCreate`, `nativeLoad`, `nativeResponse`, `nativeReset`, `nativeSetConfig`, `nativeDestroy`, metric accessors
+- [x] `CMakeLists.txt` linking MNN libraries via imported targets
+- [x] `MNNLlm.kt` — primary SDK entry point, full ChatML/GENERIC auto-detection
 
-### Phase 3: Kotlin Integration ⏳
-- [ ] Update `MNNEngine.kt`: Change library loading to "mnn-jni-bridge"
-- [ ] Add native method declarations in `MNNInterpreter.kt`
-- [ ] Implement tensor data transfer between Kotlin and native
-- [ ] Add proper session lifecycle management
-- [ ] Remove stub implementation references
-- [ ] Add resource cleanup (close() methods)
+### Inference correctness
+- [x] `use_template=false` fix — disables MNN jinja re-wrapping so our pre-built ChatML prompt passes through verbatim
+- [x] Thinking mode — Qwen3 budget-forcing (`<think>\n\n</think>`) correctly skips COT; thinking ON injects open `<think>` prefix
+- [x] VLM image injection — `<img>path</img>` in user turn; `response(string)` preserves the `ExecutorScope` needed by the vision encoder
+- [x] Multi-turn history — full ChatML rebuilt each call, KV-cache reset with `nativeReset()`, think block stripped from stored history
+- [x] Stop string handling — `<|im_end|>` for ChatML, jinja `eos` field respected, `<|endoftext|>` stripped from tail
 
-### Phase 4: Testing ⏳
-- [ ] Create instrumented tests in `mnn-sdk/src/androidTest/`
-- [ ] Test basic inference with simple model
-- [ ] Test multi-threaded inference
-- [ ] Test memory management (no leaks)
-- [ ] Test error handling (invalid models, wrong inputs)
-- [ ] Create performance benchmarks
-- [ ] Verify on multiple Android versions (API 21, 29, 34)
-- [ ] Test on different CPU architectures
+### Model detection
+- [x] ChatML detection from `prompt_template`, `user_prompt_template`, `system_prompt_template`, `jinja.chat_template`
+- [x] Thinking detection from `thinking_template`, `enable_thinking`, `<think>` in template or jinja
+- [x] Visual detection — `is_visual=true` in config only after confirming `visual.mnn` exists on disk
 
-### Phase 5: Sample App Enhancement ⏳
-- [ ] Replace `MNNEngineStub` with `MNNEngine` in MainActivity
-- [ ] Add real model files to `sample/src/main/assets/models/`
-- [ ] Implement image classification example
-- [ ] Add inference time display
-- [ ] Enhance UI with real results
-- [ ] Add model selection functionality
-- [ ] Test sample app on physical device
+### Developer experience (DX)
+- [x] `suspend fun MNNLlm.load(configPath)` — single-step factory, dispatches to IO, throws with clear message on failure
+- [x] `suspend fun chat()` — returns `LlmResult(text, thinking)` together; dispatches to IO internally
+- [x] `fun chatFlow()` — typed streaming: emits `ChatEvent.ThinkingToken` / `AnswerToken` / `Done` — thinking and answer separated by SDK
+- [x] `fun responseFlow()` — raw token streaming via `CallbackStreambuf` C++ → JNI `TokenCallback`
+- [x] `Closeable` — `close()` / `use{}` block support; native memory cannot leak
+- [x] `promptBuilder` lambda — overrides `buildPrompt()` entirely for RAG, few-shot, tool injection, non-ChatML formats
+- [x] `LlmResult` data class — replaces `lastThinking` side-effect property
+- [x] `ChatEvent` sealed class — `ThinkingToken`, `AnswerToken`, `Done(LlmResult)`
+- [x] `maxNewTokens` default raised 512 → 1024
+- [x] Removed `MNNEngine.initialize()` from LLM init path in sample — not required
 
-### Phase 6: Documentation ⏳
-- [ ] Update README.md (remove stub warnings, add benchmarks)
-- [ ] Update API.md (native library requirements, memory management)
-- [ ] Update GETTING_STARTED.md (installation with native libs)
-- [ ] Create CONTRIBUTING.md (build instructions, testing)
-- [ ] Add model conversion guide
-- [ ] Add troubleshooting section
-- [ ] Create changelog
+### Model downloader
+- [x] `AdvancedModelDownloader` — HuggingFace + ModelScope, live progress `Flow<DownloadState>`
+- [x] `ModelProfile` — dynamic required-file detection from `llm_config.json` (tie_embeddings, visual.mnn, audio_encoder, embedding_file)
+- [x] `repairMissingFiles()` — re-downloads only what's missing without re-downloading everything
+- [x] `deleteModel()` — clean removal
+- [x] Model catalog with online fetch + local cache
 
-### Phase 7: CI/CD ⏳
-- [ ] Create `.github/workflows/build.yml`
-- [ ] Set up automated builds on push
-- [ ] Configure automated testing
-- [ ] Add code coverage reporting
-- [ ] Set up release automation
+### Sample app
+- [x] Full chat UI with RecyclerView — user bubbles, assistant bubbles, thinking collapsible, image thumbnails
+- [x] Download dialog with per-file progress
+- [x] Model management dialog (load/delete)
+- [x] Thinking toggle switch (hidden for non-thinking models)
+- [x] Vision badge + photo picker (hidden for text-only models)
+- [x] Metrics bar (tok/s, prefill ms, decode ms)
+- [x] Auto-repair on load
 
-### Phase 8: Legal & Licensing ⏳
-- [ ] Add Apache 2.0 LICENSE file
-- [ ] Add NOTICE file with MNN attribution
-- [ ] Add third-party dependencies list
-- [ ] Review license compatibility
+### Documentation
+- [x] README fully rewritten — plug-and-play framing, complete API reference, Quick Start, Caveats & Roadmap
+- [x] Architecture notes — `use_template`, VLM, streaming, multi-turn history
 
-### Phase 9: Release Preparation ⏳
-- [ ] Review all code for quality
-- [ ] Ensure API stability
-- [ ] Create release notes
-- [ ] Tag version 1.0.0
-- [ ] Build final release AAR
-- [ ] Publish to Maven Central / JitPack
-- [ ] Announce release
+---
 
-## Critical Path (Minimum Viable)
-1. ✅ Obtain MNN native libraries
-2. ✅ Implement basic JNI bridge (model load + single inference)
-3. ✅ Test with one simple model
-4. ✅ Update sample app to use real inference
-5. ✅ Document integration steps
+## Known Gaps / Active Roadmap 🔧
+
+Each item below is a concrete engineering task with clear scope and rationale.
+
+---
+
+### GAP 1 — KV-cache not reused across turns
+**Impact**: Prefill time grows linearly with conversation length. A 10-turn conversation re-processes all 10 turns on every message.  
+**Root cause**: We call `nativeReset()` before every call and send the entire history as a single string. MNN's `Llm` class supports incremental generation but there's no `append_token` / `session_continue` API exposed yet.  
+**Fix plan**:
+- [ ] Research whether `MNN::Transformer::Llm::forward(vector<int>)` with a session continuation pointer is usable from our JNI surface
+- [ ] If yes: add `nativeResponseIncremental(handle, newTokenIds)` JNI function that skips re-prefilling history
+- [ ] Add `MNNLlm.fullRebuildEveryTurn: Boolean = true` flag so developers can opt into incremental mode once stable
+- [ ] Benchmark: target < 100ms prefill for turn N+1 on Qwen3-0.6B
+
+---
+
+### GAP 2 — Token count metrics are exact ✅
+**Impact (resolved)**: Metrics now reflect tokenizer-derived counts instead of character heuristics.  
+**Implementation**:
+- [x] Added `nativeCountTokens(handle: Long, text: String): Int` JNI function calling `llm->tokenizer_encode(text).size()`
+- [x] Added `nativeSetPromptTokens` + `nativeSetGeneratedTokens` setters
+- [x] Wired exact counting into `response()`, `chatFlow()`, and `responseFlow()` post-processing paths
+- [x] Removed all `length / 4` token estimation from Kotlin and JNI inference paths
+- [x] Added JVM unit tests for normalization/fallback logic in `TokenCountUtils`
+
+---
+
+### GAP 3 — No coroutine cancellation of in-flight generation
+**Impact**: Cancelling the collecting coroutine does not stop the native `llm->response()` call, which runs to completion on its IO thread. On a slow device this can tie up the model for 30+ seconds.  
+**Root cause**: MNN's `Llm::response()` is a blocking synchronous call with no interrupt mechanism exposed.  
+**Fix plan**:
+- [ ] Add `nativeStop(handle: Long)` JNI function that sets an atomic `stop_flag`
+- [ ] Modify `CallbackStreambuf::xsputn` to check `stop_flag` and return 0 (triggering MNN to abort)
+- [ ] In `chatFlow()` / `responseFlow()`: hook `awaitClose { nativeStop(handle) }` to cancel on flow cancellation
+- [ ] Test: verify generation halts within 1–2 tokens of cancellation signal
+
+---
+
+### GAP 4 — Only ChatML and GENERIC prompt formats built-in
+**Impact**: Llama-3, Phi-4, Mistral, Gemma, DeepSeek models fall back to `GENERIC` (`User: … Assistant:`) which degrades output quality significantly.  
+**Root cause**: Format detection was built for Qwen's ChatML. Other formats were not priority.  
+**Fix plan**:
+- [ ] Add `ChatStyle.LLAMA3` — `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n…`
+- [ ] Add `ChatStyle.PHI` — `<|system|>\n…<|end|>\n<|user|>\n…`
+- [ ] Add `ChatStyle.GEMMA` — `<start_of_turn>user\n…<end_of_turn>\n<start_of_turn>model\n`
+- [ ] Extend `create()` config detection to identify these from `jinja.chat_template` content
+- [ ] Add `ChatStyle.DEEPSEEK` for DeepSeek-R1 style (has native `<think>` too)
+- [ ] Write unit tests for each template builder
+
+---
+
+### GAP 5 — `promptBuilder` history responsibility is a footgun
+**Impact**: A developer who sets `promptBuilder` and forgets to include `history` in their formatted string loses all conversation context silently — the model gives responses as if every message is the first.  
+**Root cause**: Full control means full responsibility. The SDK cannot enforce inclusion.  
+**Fix plan**:
+- [ ] Add `MNNLlm.historySnapshot(): List<Pair<String, String>>` as an explicit public API (currently only passed inside the lambda)
+- [ ] In debug builds, add a `Log.w` if `promptBuilder` is set and `history.size > 0` but none of the history strings appear in the returned prompt
+- [ ] Add documentation example showing common mistake and correct pattern
+
+---
+
+### GAP 6 — `responseFlow()` streams raw `<think>` tags (documentation gap)
+**Impact**: Developers who discover `responseFlow()` first will see `<think>reasoning</think>answer` mixed in the stream and have to parse it themselves. The better API (`chatFlow()`) is not obvious.  
+**Root cause**: Both APIs exist but the hierarchy isn't obvious enough in the docs.  
+**Fix plan**:
+- [x] `chatFlow()` documented prominently in README as the preferred streaming API
+- [ ] Add `@Deprecated("Use chatFlow() for typed thinking/answer separation", ReplaceWith("chatFlow(userMessage, imagePath, maxNewTokens)"))` annotation to `responseFlow()` — or add a clear KDoc warning pointing to `chatFlow()`
+
+---
+
+### GAP 7 — No instrumented tests
+**Impact**: Regressions in thinking extraction, prompt building, stop-string stripping, or history storage are only caught manually.  
+**Fix plan**:
+- [ ] Add `MNNLlmTest.kt` in `mnn-sdk/src/test/` — unit tests for `extractThinking()`, `buildPrompt()`, `ChatStyle` detection, `LlmResult`, `ChatEvent`, `promptBuilder` override
+- [ ] Add `MNNLlmInstrumentedTest.kt` in `mnn-sdk/src/androidTest/` — integration test: load a tiny model, run `chat()`, verify non-empty `text`
+- [ ] Hook into CI once GitHub Actions is configured
+
+---
+
+### GAP 8 — No CI/CD
+**Impact**: Every push is manually verified. No automated build on PR.  
+**Fix plan**:
+- [ ] Add `.github/workflows/build.yml` — `./gradlew :sample:assembleDebug` on every push to `master` and on PRs
+- [ ] Add lint check step — `./gradlew :mnn-sdk:lint`
+- [ ] (Optional) Add emulator-based instrumented test run on CI
+
+---
+
+### GAP 9 — Metrics timing split is wrong in non-streaming path
+**Impact**: `prefillMs` is always exactly 30% and `decodeMs` is always 70% of total time. This is a hardcoded ratio, not measured.  
+**Root cause**: MNN's `Llm` does not expose separate prefill vs decode timings through the public header.  
+**Fix plan**:
+- [ ] Research whether `Llm::runtime_manager()` or performance counters expose per-phase timing
+- [ ] If yes: plumb real values through `LlmSession` and update `nativeGetPrefillMs` / `nativeGetDecodeMs`
+- [ ] If no: time the first token arrival in `CallbackStreambuf::xsputn` as a proxy for prefill completion, use that as the split point
+
+---
+
+## Priority Order
+
+| Priority | Gap | Effort | Impact |
+|---|---|---|---|
+| 🔴 High | GAP 3 — Cancellation | Medium | UX critical on slow devices |
+| 🟡 Medium | GAP 1 — KV-cache reuse | High | Performance at long context |
+| 🟡 Medium | GAP 4 — More prompt formats | Medium | Model compatibility |
+| 🟡 Medium | GAP 7 — Unit tests | Medium | Regression safety |
+| 🟡 Medium | GAP 8 — CI/CD | Low | Dev workflow |
+| 🟢 Low | GAP 5 — promptBuilder footgun | Low | DX polish |
+| 🟢 Low | GAP 6 — responseFlow() warning | Low | API clarity |
+| 🟢 Low | GAP 9 — Real metrics timing | High | Observability |
+
+---
 
 ## Current Status
-- **Project Structure**: ✅ Complete
-- **Build System**: ✅ Working (Gradle configured)
-- **Kotlin SDK API**: ✅ Designed and tested (stub)
-- **JNI Bridge**: ❌ Not implemented
-- **Native Libraries**: ❌ Not included
-- **Real Inference**: ❌ Stubbed
-- **Sample App**: ⚠️ Uses stub implementation
-- **Documentation**: ✅ Comprehensive (needs update for native)
 
-## Estimated Time to Completion
-- **Minimum Viable**: 2-3 days
+| Area | Status |
+|---|---|
+| Native libraries (arm64, armeabi-v7a) | ✅ Bundled and working |
+| JNI bridge (`mnn_llm.cpp`) | ✅ Complete |
+| Core inference — text, thinking, vision | ✅ Working |
+| Coroutine API (`chat`, `chatFlow`, `responseFlow`) | ✅ Complete |
+| Token streaming (C++ CallbackStreambuf) | ✅ Working |
+| Typed ChatEvent (ThinkingToken / AnswerToken) | ✅ Complete |
+| Prompt customisation (`promptBuilder`) | ✅ Complete |
+| `Closeable` / `use{}` support | ✅ Complete |
+| Model downloader + repair | ✅ Working |
+| Sample app | ✅ Working |
+| README + docs | ✅ Up to date |
+| KV-cache incremental updates | ❌ Not implemented (GAP 1) |
+| Exact token count metrics | ✅ Implemented (GAP 2 resolved) |
+| Generation cancellation | ❌ Not possible yet (GAP 3) |
+| Non-ChatML prompt formats | ❌ Falls back to GENERIC (GAP 4) |
+| Unit / instrumented tests | ❌ Not written (GAP 7) |
+| CI/CD | ❌ Not configured (GAP 8) |
+
 - **Full Production Ready**: 5-7 days
 
 ## Blockers
