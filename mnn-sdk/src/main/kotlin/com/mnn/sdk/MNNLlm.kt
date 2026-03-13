@@ -263,23 +263,30 @@ class MNNLlm private constructor(
         nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
             TokenCallback { token ->
                 accumulated.append(token)
+                // Track whether any send failed so we can signal the C++ side to stop.
+                var failed = false
                 when {
                     token.contains("</think>") -> {
                         // Flush any thinking content before the closing tag.
                         val before = token.substringBefore("</think>")
-                        if (before.isNotEmpty() && inThinking) trySend(ChatEvent.ThinkingToken(before))
+                        if (before.isNotEmpty() && inThinking)
+                            failed = failed || trySend(ChatEvent.ThinkingToken(before)).isFailure
                         inThinking = false
                         val after = token.substringAfter("</think>")
-                        if (after.isNotEmpty()) trySend(ChatEvent.AnswerToken(after))
+                        if (after.isNotEmpty())
+                            failed = failed || trySend(ChatEvent.AnswerToken(after)).isFailure
                     }
                     token.contains("<think>") -> {
                         inThinking = true
                         val after = token.substringAfter("<think>")
-                        if (after.isNotEmpty()) trySend(ChatEvent.ThinkingToken(after))
+                        if (after.isNotEmpty())
+                            failed = failed || trySend(ChatEvent.ThinkingToken(after)).isFailure
                     }
-                    inThinking -> trySend(ChatEvent.ThinkingToken(token))
-                    else       -> trySend(ChatEvent.AnswerToken(token))
+                    inThinking -> failed = trySend(ChatEvent.ThinkingToken(token)).isFailure
+                    else       -> failed = trySend(ChatEvent.AnswerToken(token)).isFailure
                 }
+                // Channel closed (consumer cancelled) — stop C++ generation immediately.
+                if (failed) nativeStop(handle)
             }
         )
 
@@ -295,7 +302,7 @@ class MNNLlm private constructor(
         trySend(ChatEvent.Done(LlmResult(clean, thinking)))
 
         close()
-        awaitClose()
+        awaitClose { nativeStop(handle) }
     }.flowOn(Dispatchers.IO)
 
     /** Release native resources. Alias for [destroy]; enables `use { }` blocks. */
@@ -350,7 +357,8 @@ class MNNLlm private constructor(
         nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
             TokenCallback { token ->
                 accumulated.append(token)
-                trySend(token)
+                // Stop C++ generation immediately if the consumer has cancelled.
+                if (trySend(token).isFailure) nativeStop(handle)
             }
         )
 
@@ -366,7 +374,7 @@ class MNNLlm private constructor(
         updateExactTokenMetrics(fullPrompt, clean)
 
         close()
-        awaitClose()
+        awaitClose { nativeStop(handle) }
     }.flowOn(Dispatchers.IO)
 
     /** Clear conversation history and KV-cache. */
@@ -495,6 +503,7 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeLoad(handle: Long): Boolean
         @JvmStatic private external fun nativeResponse(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?): String
         @JvmStatic private external fun nativeResponseStreaming(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?, callback: TokenCallback)
+        @JvmStatic private external fun nativeStop(handle: Long)
         @JvmStatic private external fun nativeReset(handle: Long)
         @JvmStatic private external fun nativeSetConfig(handle: Long, configJson: String)
         @JvmStatic private external fun nativeSetPromptTokens(handle: Long, count: Int)

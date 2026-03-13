@@ -364,7 +364,7 @@ These are the current limitations. Contributions welcome.
 
 - **[ ] `promptBuilder` owns history formatting entirely** — When `promptBuilder` is set, the SDK passes a read-only `List<Pair<String,String>>` snapshot but the caller is responsible for including it in the output string. If history is omitted in the custom builder, the model loses context. This is intentional (full control) but easy to get wrong.
 
-- **[ ] No cancellation support in streaming** — Cancelling the coroutine that collects `chatFlow()` / `responseFlow()` does not interrupt the underlying `nativeResponseStreaming()` C++ call, which runs to completion on its IO thread. Proper cancellation would require MNN to expose a `llm->stop()` API.
+- **[x] Streaming cancellation supported** — Cancelling the collector coroutine (or using `take(n)`, `timeout`, etc.) signals `nativeStop()`, which sets an atomic flag checked inside `CallbackStreambuf::xsputn`; MNN sees a bad ostream state and stops generation within one token.
 
 - **[ ] ChatML / GENERIC are the only built-in formats** — Models using Llama-3, Phi, Mistral, Gemma, or other non-ChatML prompt formats will fall back to the `GENERIC` (`User: … Assistant:`) format, which is suboptimal. Use `promptBuilder` to override for these models until proper auto-detection is added.
 

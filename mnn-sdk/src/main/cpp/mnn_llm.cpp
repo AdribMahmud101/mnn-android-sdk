@@ -2,6 +2,7 @@
 #include <string>
 #include <sstream>
 #include <chrono>
+#include <atomic>
 #include <exception>
 #include <android/log.h>
 
@@ -20,6 +21,8 @@ struct LlmSession {
     int64_t decode_ms = 0;
     int     prompt_tokens = 0;
     int     generated_tokens = 0;
+    // Atomic flag: set to true by nativeStop() to interrupt streaming generation.
+    std::atomic<bool> stop_flag{false};
 };
 
 inline LlmSession* toSession(jlong handle) {
@@ -30,13 +33,17 @@ inline LlmSession* toSession(jlong handle) {
 
 // Custom streambuf that fires a Java TokenCallback.onToken(String) for each chunk
 // written by MNN's response() — enabling token-by-token streaming from C++ to Kotlin.
+// When stopFlag is set (via nativeStop), xsputn returns 0 which puts the ostream into
+// a bad state; MNN checks os->good() after each token write and stops generation.
 class CallbackStreambuf : public std::streambuf {
 public:
-    CallbackStreambuf(JNIEnv* e, jobject cb, jmethodID mid)
-        : mEnv(e), mCallback(cb), mMethod(mid) {}
+    CallbackStreambuf(JNIEnv* e, jobject cb, jmethodID mid, std::atomic<bool>& stopFlag)
+        : mEnv(e), mCallback(cb), mMethod(mid), mStopFlag(stopFlag) {}
 
 protected:
     std::streamsize xsputn(const char* s, std::streamsize n) override {
+        // Return 0 to signal the ostream is done; MNN will observe !os->good() and stop.
+        if (mStopFlag.load(std::memory_order_relaxed)) return 0;
         // MNN writes one decoded token per xsputn call; copy to get null-termination.
         std::string token(s, static_cast<size_t>(n));
         jstring js = mEnv->NewStringUTF(token.c_str());
@@ -48,6 +55,7 @@ protected:
     }
 
     int overflow(int c) override {
+        if (mStopFlag.load(std::memory_order_relaxed)) return EOF;
         if (c != EOF) {
             char ch = static_cast<char>(c);
             std::string token(&ch, 1);
@@ -64,6 +72,7 @@ private:
     JNIEnv* mEnv;
     jobject mCallback;
     jmethodID mMethod;
+    std::atomic<bool>& mStopFlag;
 };
 
 extern "C" {
@@ -274,7 +283,8 @@ Java_com_mnn_sdk_MNNLlm_nativeResponseStreaming(JNIEnv* env, jclass /*cls*/,
         stopStr = stopStorage.c_str();
     }
 
-    CallbackStreambuf cbBuf(env, callback, onToken);
+    s->stop_flag.store(false, std::memory_order_relaxed);
+    CallbackStreambuf cbBuf(env, callback, onToken, s->stop_flag);
     std::ostream cbStream(&cbBuf);
 
     auto t0 = std::chrono::steady_clock::now();
@@ -286,6 +296,14 @@ Java_com_mnn_sdk_MNNLlm_nativeResponseStreaming(JNIEnv* env, jclass /*cls*/,
     s->prefill_ms = total_ms * 30 / 100;
     s->decode_ms  = total_ms * 70 / 100;
     LOGI("responseStreaming(): %lld ms", (long long)total_ms);
+}
+
+// Interrupt an in-progress nativeResponseStreaming() call. Thread-safe: sets an atomic
+// flag that CallbackStreambuf checks on every token; MNN sees !os->good() and stops.
+JNIEXPORT void JNICALL
+Java_com_mnn_sdk_MNNLlm_nativeStop(JNIEnv*, jclass, jlong handle) {
+    LlmSession* s = toSession(handle);
+    if (s) s->stop_flag.store(true, std::memory_order_relaxed);
 }
 
 } // extern "C"
