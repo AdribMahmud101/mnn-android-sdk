@@ -397,6 +397,7 @@ class MainActivity : AppCompatActivity() {
     private fun showModelDownloadDialog() {
         // Build quick model list with popular models + catalog option
         val quickModelList = mutableListOf(
+            "LFM2 350M (0.35 GB)",
             "Qwen2.5-0.5B-Instruct (0.5 GB)",
             "Qwen3.5-0.8B (0.8 GB)",
             "Qwen3.5-2B (2.0 GB)",
@@ -408,10 +409,11 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Download Model")
             .setItems(quickModelList.toTypedArray()) { _, which ->
                 when (which) {
-                    0 -> downloadPopularModel(0) // Qwen2.5-0.5B-Instruct
-                    1 -> downloadPopularModel(1) // Qwen3.5-0.8B
-                    2 -> downloadPopularModel(2) // Qwen3.5-2B
-                    3 -> {
+                    0 -> downloadPopularModel(0) // LFM2 350M
+                    1 -> downloadPopularModel(1) // Qwen2.5-0.5B-Instruct
+                    2 -> downloadPopularModel(2) // Qwen3.5-0.8B
+                    3 -> downloadPopularModel(3) // Qwen3.5-2B
+                    4 -> {
                         // Browse full catalog
                         if (modelCatalog != null) {
                             showModelCatalogDialog(modelCatalog!!)
@@ -442,7 +444,7 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
-                    4 -> showCustomUrlDialog() // Custom URL
+                    5 -> showCustomUrlDialog() // Custom URL
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -452,6 +454,7 @@ class MainActivity : AppCompatActivity() {
     private fun downloadPopularModel(index: Int) {
         // Map to actual model info from catalog
         val popularModelNames = listOf(
+            "LFM2-350M-MNN",
             "Qwen2.5-0.5B-Instruct-MNN",
             "Qwen3.5-0.8B-MNN",
             "Qwen3.5-2B-MNN"
@@ -472,6 +475,7 @@ class MainActivity : AppCompatActivity() {
         
         // Fallback: construct basic model info and download from HuggingFace
         val repoPath = when (modelName) {
+            "LFM2-350M-MNN" -> "taobao-mnn/LFM2-350M-MNN"
             "Qwen2.5-0.5B-Instruct-MNN" -> "taobao-mnn/Qwen2.5-0.5B-Instruct-MNN"
             "Qwen3.5-0.8B-MNN" -> "taobao-mnn/Qwen3.5-0.8B-MNN"
             "Qwen3.5-2B-MNN" -> "taobao-mnn/Qwen3.5-2B-MNN"
@@ -485,6 +489,7 @@ class MainActivity : AppCompatActivity() {
             sizeGb = when (modelName) {
                 "Qwen3.5-0.8B-MNN" -> 0.8
                 "Qwen3.5-2B-MNN" -> 2.0
+                "LFM2-350M-MNN" -> 0.35
                 "Qwen2.5-0.5B-MNN" -> 0.5
                 "DeepSeek-R1-0.5B-MNN" -> 0.5
                 else -> 1.0
