@@ -27,6 +27,7 @@ class MNNLlm private constructor(
     private val handle: Long,
     private val chatStyle: ChatStyle,
     private val stopString: String?,
+    private val bosToken: String?,
     /** True if the model supports chain-of-thought thinking (e.g. Qwen3-Instruct). */
     val supportsThinking: Boolean,
     /** True if the model was loaded with visual.mnn present (VLM capable). */
@@ -198,6 +199,9 @@ class MNNLlm private constructor(
     private fun buildPrompt(userMessage: String, imagePath: String?): String {
         promptBuilder?.let { return it(history.toList(), userMessage, imagePath, systemPrompt) }
         return buildString {
+            if (!bosToken.isNullOrEmpty()) {
+                append(bosToken).append("\n")
+            }
         when (chatStyle) {
             ChatStyle.QWEN_CHATML -> {
                 append("<|im_start|>system\n")
@@ -450,15 +454,21 @@ class MNNLlm private constructor(
         }
 
         fun create(configPath: String): MNNLlm? {
-            val handle = nativeCreate(configPath)
-            if (handle == 0L) return null
-
             val chatStyle: ChatStyle
             val stopString: String?
             val supportsThinking: Boolean
             val isVisual: Boolean
+            var bosToken: String? = null
             try {
-                val configJson = org.json.JSONObject(File(configPath).readText())
+                val configFile = File(configPath)
+                val configJson = org.json.JSONObject(configFile.readText())
+                
+                // Fix LFM slow prefill by ensuring is_single is false
+                if (configJson.optString("model_type").startsWith("lfm") && !configJson.has("is_single")) {
+                    configJson.put("is_single", false)
+                    configFile.writeText(configJson.toString(4))
+                }
+                
                 val template = configJson.optString("prompt_template", "")
                 // Qwen3/Qwen3.5 models use per-role template fields instead of prompt_template
                 val userTemplate = configJson.optString("user_prompt_template", "")
@@ -466,6 +476,7 @@ class MNNLlm private constructor(
                 val jinjaObj = configJson.optJSONObject("jinja")
                 val jinjaTemplate = jinjaObj?.optString("chat_template", "") ?: ""
                 val jinjaEos = jinjaObj?.optString("eos")
+                bosToken = jinjaObj?.optString("bos")
 
                 // Qwen3.5 VLM and other newer models only expose ChatML via jinja.chat_template;
                 // they have no top-level prompt_template / user_prompt_template at all.
@@ -492,11 +503,15 @@ class MNNLlm private constructor(
                 isVisual = configJson.optBoolean("is_visual", false)
 
             } catch (_: Exception) {
-                return MNNLlm(handle, ChatStyle.QWEN_CHATML, "<|im_end|>",
+                val handle = nativeCreate(configPath)
+                if (handle == 0L) return null
+                return MNNLlm(handle, ChatStyle.QWEN_CHATML, "<|im_end|>", null,
                                supportsThinking = false, isVisual = false)
             }
 
-            return MNNLlm(handle, chatStyle, stopString, supportsThinking, isVisual)
+            val handle = nativeCreate(configPath)
+            if (handle == 0L) return null
+            return MNNLlm(handle, chatStyle, stopString, bosToken, supportsThinking, isVisual)
         }
 
         @JvmStatic private external fun nativeCreate(configPath: String): Long
