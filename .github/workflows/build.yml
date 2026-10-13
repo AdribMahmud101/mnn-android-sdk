@@ -1,0 +1,119 @@
+name: Build
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*') }}
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Verify bundled MNN engine version matches declared version
+        # The prebuilt .so files and the vendored headers must come from the SAME MNN
+        # release. Bumping one without the other silently breaks ABI, so this is checked
+        # before anything is compiled.
+        run: |
+          set -euo pipefail
+          DECLARED=$(grep -E '^MNN_ENGINE_VERSION=' gradle.properties | cut -d= -f2)
+          HEADER=$(grep -E '#define MNN_VERSION_(MAJOR|MINOR|PATCH)' \
+                   mnn-sdk/src/main/cpp/include/MNN/MNNDefine.h \
+                   | awk '{print $3}' | paste -sd. -)
+          echo "declared=$DECLARED header=$HEADER"
+          [ "$DECLARED" = "$HEADER" ] || { echo "::error::MNN_ENGINE_VERSION=$DECLARED but headers say $HEADER"; exit 1; }
+
+      - name: Build SDK release AAR (compiles JNI bridge via CMake/NDK)
+        run: ./gradlew :mnn-sdk:assembleRelease --stacktrace
+
+      - name: Verify JNI bridge symbols resolve against bundled libs
+        # include/llm/llm.hpp is a hand-written, vtable-matched declaration of
+        # MNN::Transformer::Llm. If a future libllm.so reorders virtuals this breaks
+        # silently at runtime, so every MNN symbol the bridge imports is checked
+        # against the actual shipped libraries here.
+        run: |
+          set -euo pipefail
+          LIBDIR=mnn-sdk/src/main/jniLibs/arm64-v8a
+          BRIDGE=$(find mnn-sdk/build -name libmnn-jni-bridge.so | head -1)
+          [ -n "$BRIDGE" ] || { echo "::error::JNI bridge not built"; exit 1; }
+          nm -D --undefined-only "$BRIDGE" | awk '{print $NF}' | grep -E '^_ZN3MNN' | LC_ALL=C sort -u > /tmp/undef.txt
+          { nm -D --defined-only "$LIBDIR"/libMNN.so
+            nm -D --defined-only "$LIBDIR"/libMNN_Express.so
+            nm -D --defined-only "$LIBDIR"/libllm.so; } | awk '{print $NF}' | LC_ALL=C sort -u > /tmp/prov.txt
+          MISSING=$(LC_ALL=C comm -23 /tmp/undef.txt /tmp/prov.txt)
+          if [ -n "$MISSING" ]; then
+            echo "::error::JNI bridge imports symbols missing from bundled libs:"
+            c++filt <<< "$MISSING"
+            exit 1
+          fi
+          echo "OK: all $(wc -l < /tmp/undef.txt) MNN symbols resolve"
+
+      - name: Run unit tests
+        # Includes MNNConfigEnumContractTest, which pins the public config constants
+        # to MNN's real enum values.
+        run: ./gradlew :mnn-sdk:testReleaseUnitTest --stacktrace
+
+      - name: Run Android lint
+        run: ./gradlew :mnn-sdk:lintRelease --stacktrace
+
+      - name: Build sample APK with R8 enabled
+        # Validates the ProGuard/consumer rules against the JNI surface.
+        run: ./gradlew :sample:assembleRelease --stacktrace
+
+      - name: Verify SDK classes survive R8 in a minified consumer
+        run: |
+          set -euo pipefail
+          APK=$(ls sample/build/outputs/apk/release/*.apk | head -1)
+          for c in MNNLlm MNNEngine MNNInterpreter MNNTensor MNNModel MNNConfig; do
+            if ! unzip -p "$APK" 'classes*.dex' | strings | grep -q "com/mnn/sdk/$c"; then
+              echo "::error::com.mnn.sdk.$c was renamed/removed by R8 - JNI lookup would fail"
+              exit 1
+            fi
+            echo "  OK com.mnn.sdk.$c preserved"
+          done
+
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnn-sdk-release-aar
+          path: mnn-sdk/build/outputs/aar/*.aar
+          if-no-files-found: error
+
+      - name: Upload sample APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-release-apk
+          path: sample/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: mnn-sdk/build/reports/tests/
+          if-no-files-found: ignore

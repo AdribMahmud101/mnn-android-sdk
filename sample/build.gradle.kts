@@ -19,7 +19,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Enabled so CI actually exercises R8 against the SDK's JNI surface.
+            // The SDK's consumer-rules.pro keeps com.mnn.sdk.** and native members,
+            // which is what preserves the Java_com_mnn_sdk_* JNI symbol lookup.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -36,9 +40,8 @@ android {
         jvmTarget = "17"
     }
     
-    buildFeatures {
-        viewBinding = true
-    }
+    // NOTE: viewBinding was previously enabled but never used - all view access in
+    // MainActivity goes through findViewById. Left off deliberately.
 }
 
 dependencies {

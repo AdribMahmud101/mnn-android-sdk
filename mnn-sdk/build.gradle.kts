@@ -10,7 +10,12 @@ android {
     
     defaultConfig {
         minSdk = project.property("MIN_SDK_VERSION").toString().toInt()
-        
+        // Libraries normally leave targetSdk to the consuming app, but the androidTest
+        // APK derives its targetSdk from this module. Without it the test APK inherits
+        // minSdk (21), which modern devices refuse to install
+        // (INSTALL_FAILED_DEPRECATED_SDK_VERSION). Test installs only.
+        targetSdk = project.property("TARGET_SDK_VERSION").toString().toInt()
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
         
@@ -97,10 +102,13 @@ dependencies {
     // Testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${project.property("COROUTINES_VERSION")}")
-    testImplementation("io.mockk:mockk:1.13.8")
     
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test:rules:1.5.0")
+    androidTestImplementation("androidx.test:core-ktx:1.5.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${project.property("COROUTINES_VERSION")}")
 }
 
 publishing {
