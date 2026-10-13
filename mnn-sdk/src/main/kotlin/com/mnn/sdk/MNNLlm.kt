@@ -180,6 +180,21 @@ class MNNLlm private constructor(
      * Set to `0` (or a negative value) to disable and let generations run unbounded.
      * Defaults to [DEFAULT_GENERATION_TIMEOUT_MS].
      */
+    /**
+     * CPU threads MNN uses for inference.
+     *
+     * MNN defaults to 4, which leaves most of an 8-core phone idle - that alone
+     * roughly halves throughput. Defaults to half the available cores so the UI stays
+     * responsive, and can be raised for batch work. Set before load(), or any time
+     * (it is re-applied to the engine config).
+     */
+    var numThreads: Int = defaultThreadCount()
+        set(value) {
+            require(value > 0) { "numThreads must be positive" }
+            field = value
+            if (handle != 0L) applyEngineConfig()
+        }
+
     var generationTimeoutMs: Int = DEFAULT_GENERATION_TIMEOUT_MS
         set(value) {
             field = value
@@ -188,10 +203,17 @@ class MNNLlm private constructor(
 
     private fun applyEngineConfig() {
         val timeout = generationTimeoutMs
+        val threads = numThreads
+        // NOTE: do NOT set use_template:false here. That flag disables MNN's own chat
+        // template, which is exactly what Llm::response(ChatMessages, ...) relies on.
+        // With it set, the model receives a prompt that never went through its
+        // template and answers off-topic; we saw "What is 2+2?" come back as
+        // "It seems you've entered 'your name.'". It only existed to support the old
+        // hand-built-prompt path.
         val json = if (timeout > 0) {
-            """{"use_template":false,"timeout_ms":$timeout}"""
+            """{"timeout_ms":$timeout,"thread_num":$threads}"""
         } else {
-            """{"use_template":false}"""
+            """{"thread_num":$threads}"""
         }
         nativeSetConfig(handle, json)
     }
@@ -593,6 +615,10 @@ class MNNLlm private constructor(
          */
         const val DEFAULT_GENERATION_TIMEOUT_MS = 120_000
 
+        /** Half the available cores: enough to saturate MNN, leaves room for the UI. */
+        fun defaultThreadCount(): Int =
+            (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+
         /** How long to wait for MNN to unwind after a cancel before giving up. */
         private const val CANCEL_GRACE_MS = 5_000L
 
@@ -645,11 +671,27 @@ class MNNLlm private constructor(
                 val configFile = File(configPath)
                 val configJson = org.json.JSONObject(configFile.readText())
                 
+                // Point MNN at the tokenizer file this model actually ships.
+                // MNN resolves config.tokenizer_file and falls back to "tokenizer.txt".
+                // LFM2/LFM2.5 models ship tokenizer.mtok instead; without this the model
+                // fails to load, and if the file is merely copied to tokenizer.txt its
+                // contents are parsed by the wrong reader and the model answers off-topic
+                // (we saw "What is 2+2?" return "It seems you're asking about a project").
+                val modelDir = configFile.parentFile
+                var patched = false
+                if (!configJson.has("tokenizer_file") && modelDir != null &&
+                    File(modelDir, "tokenizer.mtok").isFile
+                ) {
+                    configJson.put("tokenizer_file", "tokenizer.mtok")
+                    patched = true
+                }
+
                 // Fix LFM slow prefill by ensuring is_single is false
                 if (configJson.optString("model_type").startsWith("lfm") && !configJson.has("is_single")) {
                     configJson.put("is_single", false)
-                    configFile.writeText(configJson.toString(4))
+                    patched = true
                 }
+                if (patched) configFile.writeText(configJson.toString(4))
                 
                 val template = configJson.optString("prompt_template", "")
                 // Qwen3/Qwen3.5 models use per-role template fields instead of prompt_template
@@ -668,7 +710,13 @@ class MNNLlm private constructor(
                     systemPromptTemplate = sysTemplate,
                     jinjaChatTemplate = jinjaTemplate
                 )
-                stopString = LlmConfigAnalyzer.detectStopString(jinjaEos, chatStyle)
+                stopString = LlmConfigAnalyzer.detectStopString(
+                    jinjaEos = jinjaEos,
+                    chatStyle = chatStyle,
+                    promptTemplate = template,
+                    userPromptTemplate = userTemplate,
+                    assistantPromptTemplate = configJson.optString("assistant_prompt_template", "")
+                )
 
 
                 // Thinking: model advertises support via "thinking_template" field,

@@ -36,14 +36,37 @@ internal object LlmConfigAnalyzer {
     /**
      * Stop string passed to `Llm::response`.
      *
-     * An explicit `jinja.eos` always wins. Otherwise ChatML models get `""`,
-     * which makes MNN stop on the model's own EOS token, while GENERIC models
-     * get `null` (rely on EOS as well, no sentinel terminator).
+     * An explicit `jinja.eos` always wins. Failing that, for a ChatML model we look
+     * for the model's own end marker in its prompt templates, and otherwise fall back
+     * to ChatML's canonical `<|im_end|>`.
+     *
+     * Returning `""` here is actively harmful: MNN only stops when the sentinel is
+     * produced, and an empty string never is, so every request runs to
+     * `maxNewTokens` and looks like a hung device. Qwen2.5-0.5B-MNN ships no `jinja`
+     * block at all, so it hit exactly that - multi-turn appeared to deadlock.
      */
-    fun detectStopString(jinjaEos: String?, chatStyle: MNNLlm.ChatStyle): String? = when {
+    fun detectStopString(
+        jinjaEos: String?,
+        chatStyle: MNNLlm.ChatStyle,
+        promptTemplate: String = "",
+        userPromptTemplate: String = "",
+        assistantPromptTemplate: String = ""
+    ): String? = when {
         !jinjaEos.isNullOrBlank() -> jinjaEos
-        chatStyle == MNNLlm.ChatStyle.QWEN_CHATML -> ""
-        else -> null
+        chatStyle != MNNLlm.ChatStyle.QWEN_CHATML -> null
+        else -> findEndMarker(promptTemplate)
+            ?: findEndMarker(userPromptTemplate)
+            ?: findEndMarker(assistantPromptTemplate)
+            ?: CHATML_END
+    }
+
+    /** Pull the assistant-turn terminator out of a prompt template, if present. */
+    private fun findEndMarker(template: String): String? {
+        if (template.isEmpty()) return null
+        for (marker in listOf(CHATML_END, "<|endoftext|>", "<|eot_id|>", "</s>")) {
+            if (template.contains(marker)) return marker
+        }
+        return null
     }
 
     /**

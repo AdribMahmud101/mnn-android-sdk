@@ -61,8 +61,31 @@ class MNNLlmPromptTest {
     }
 
     @Test
-    fun `blank jinja eos falls back to chatml sentinel`() {
-        assertEquals("", LlmConfigAnalyzer.detectStopString("   ", MNNLlm.ChatStyle.QWEN_CHATML))
+    fun `blank jinja eos falls back to a real chatml end marker`() {
+        // Regression: this used to return "", which never matches, so every request
+        // ran to maxNewTokens and looked like a hung device (Qwen2.5-0.5B-MNN).
+        assertEquals(
+            imEnd,
+            LlmConfigAnalyzer.detectStopString("   ", MNNLlm.ChatStyle.QWEN_CHATML)
+        )
+    }
+
+    @Test
+    fun `end marker is taken from the models own template`() {
+        assertEquals(
+            "<|eot_id|>",
+            LlmConfigAnalyzer.detectStopString(
+                jinjaEos = null,
+                chatStyle = MNNLlm.ChatStyle.QWEN_CHATML,
+                promptTemplate = "<|im_start|>assistant<|eot_id|>"
+            )
+        )
+    }
+
+    @Test
+    fun `chatml with no template still gets a working sentinel`() {
+        val stop = LlmConfigAnalyzer.detectStopString(null, MNNLlm.ChatStyle.QWEN_CHATML)
+        assertTrue("stop string must be non-empty or generation never halts", !stop.isNullOrEmpty())
     }
 
     @Test
