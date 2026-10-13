@@ -22,6 +22,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Do NOT rely on the action's default package list: it includes 'tools',
+          # which Google has removed from sdkmanager, so every run died with
+          # "Failed to find package 'tools'" before building anything.
+          # NDK and CMake are required: the JNI bridge is compiled from source.
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;25.1.8937393 cmake;3.22.1'
+          cmdline-tools-version: 11076708
 
       - name: Cache Gradle
         uses: actions/cache@v4
