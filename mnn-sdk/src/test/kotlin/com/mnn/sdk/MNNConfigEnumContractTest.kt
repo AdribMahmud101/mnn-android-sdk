@@ -1,7 +1,9 @@
 package com.mnn.sdk
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
@@ -55,6 +57,26 @@ class MNNConfigEnumContractTest {
         assertEquals(0, MemoryMode.NORMAL)
         assertEquals(1, MemoryMode.HIGH)
         assertEquals(2, MemoryMode.LOW)
+    }
+
+    /**
+     * create() must not hand back a live MNNLlm when llm_config.json cannot be
+     * parsed. Regression guard: it used to fall through to nativeCreate() in the
+     * catch block and return a handle that was guaranteed to fail later inside
+     * load(). Caught by MNNLlmInstrumentedTest.loadRejectsGarbageConfigWithoutCrashing.
+     */
+    @Test
+    fun `create does not fabricate a handle for unparseable config`() {
+        val src = java.io.File("src/main/kotlin/com/mnn/sdk/MNNLlm.kt")
+        assumeTrue("source not available in this working dir", src.isFile)
+        val text = src.readText()
+        // The catch block around config parsing must return null, not construct MNNLlm.
+        val catchBlock = Regex("catch \\([^)]*Exception\\) \\{[\\s\\S]*?\\n\\s*\\}").find(text)
+        assertTrue("expected a catch block in create()", catchBlock != null)
+        assertFalse(
+            "create() must not construct an MNNLlm from its catch block",
+            catchBlock!!.value.contains("MNNLlm(")
+        )
     }
 
     @Test

@@ -550,11 +550,14 @@ class MNNLlm private constructor(
                 // meaning visual.mnn was actually present on disk.
                 isVisual = configJson.optBoolean("is_visual", false)
 
-            } catch (_: Exception) {
-                val handle = nativeCreate(configPath)
-                if (handle == 0L) return null
-                return MNNLlm(handle, ChatStyle.QWEN_CHATML, "<|im_end|>", null,
-                               supportsThinking = false, isVisual = false)
+            } catch (e: Exception) {
+                // The config could not be parsed as JSON. MNN parses llm_config.json
+                // with rapidjson, so a file org.json rejects is a file MNN cannot use
+                // either. Returning a handle here would hand callers a live MNNLlm
+                // guaranteed to fail later inside load() with a far less useful
+                // message, so fail fast at the call site instead.
+                Log.w("MNNLlm", "Could not parse $configPath as JSON: ${e.message}")
+                return null
             }
 
             val handle = nativeCreate(configPath)
