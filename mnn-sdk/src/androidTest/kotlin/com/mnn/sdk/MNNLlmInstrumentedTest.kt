@@ -198,6 +198,31 @@ class MNNLlmInstrumentedTest {
         }
     }
 
+    /** Renders the exact prompt MNN will tokenise, so template bugs are visible. */
+    @Test
+    fun renderedPromptUsesTheModelsChatTemplate(): Unit = kotlinx.coroutines.runBlocking {
+        val modelDir = discoverModel()
+        assumeTrue("No model found; skipping", modelDir != null)
+        val config = File(modelDir!!, "llm_config.json").absolutePath
+        val llm = MNNLlm.load(config)
+        try {
+            val msgs = arrayOf(
+                "system", "You are a helpful assistant.",
+                "user", "What is 2 + 2? Answer with just the number."
+            )
+            val rendered = llm.renderPrompt(msgs)
+            Log.i(tag, "RENDERED PROMPT >>>$rendered<<<")
+            // A template-aware render carries role/turn markers; the fallback path
+            // returns bare concatenated content with no structure at all.
+            assertTrue(
+                "rendered prompt has no chat structure (template not loaded): '$rendered'",
+                rendered.contains("<|im_start|>") || rendered.contains("im_start")
+            )
+        } finally {
+            llm.close()
+        }
+    }
+
     @Test
     fun loadRejectsGarbageConfigWithoutCrashing() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext

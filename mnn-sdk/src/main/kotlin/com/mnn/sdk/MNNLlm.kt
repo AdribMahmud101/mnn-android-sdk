@@ -108,6 +108,9 @@ class MNNLlm private constructor(
 
     @Volatile private var destroyed = false
 
+    /** False when MNN's template engine mangles this model's template. */
+    @Volatile private var chatTemplateUsable = true
+
     var systemPrompt: String = "You are a helpful assistant. Always respond in the same language the user writes in."
 
     /**
@@ -164,8 +167,43 @@ class MNNLlm private constructor(
             // prefill+decode exceeds it. That turns an unbounded generation (which cannot
             // be cancelled - see [destroy]) into a bounded one.
             applyEngineConfig()
+            chatTemplateUsable = probeChatTemplate()
+            if (!chatTemplateUsable) {
+                Log.w(
+                    "MNNLlm",
+                    "This model's jinja chat_template does not render message content " +
+                        "through MNN's template engine (MNN's jinja returns \"\" for " +
+                        "object method calls such as message.get(\"content\"), so the " +
+                        "template emits role markers with empty content). Falling back " +
+                        "to a hand-built ChatML prompt. Answers may be degraded."
+                )
+            }
         }
         return ok
+    }
+
+    /**
+     * Render a probe conversation and check the content actually survives.
+     *
+     * MNN's jinja `MethodCallExpr::evaluate` only implements string methods
+     * (startswith/endswith/split/strip/replace) and returns `""` for everything else.
+     * A template that calls `message.get("content")` - object method-call syntax MNN
+     * does not support - therefore yields empty content while still emitting the role
+     * markers, producing a structurally valid but semantically empty prompt. The model
+     * then answers off-topic. Detecting this up front is the only way to notice.
+     */
+    private fun probeChatTemplate(): Boolean {
+        val marker = "zzprobe" + "7"
+        return try {
+            val rendered = nativeRenderPrompt(
+                handle,
+                arrayOf("system", marker + "sys", "user", marker + "usr")
+            )
+            rendered.contains(marker + "usr")
+        } catch (e: Throwable) {
+            Log.w("MNNLlm", "chat template probe failed: ${e.message}")
+            false
+        }
     }
 
     /**
@@ -236,7 +274,13 @@ class MNNLlm private constructor(
         // No nativeReset() here on purpose: MNN owns the KV cache when driven through
         // the ChatMessages API, and calling Llm::reset() between turns mutates
         // mMeta->remove, which wedged the second turn on-device.
-        val raw = nativeResponseChat(handle, messages.toChatArray(), stopString, maxNewTokens).trim()
+        val raw = if (chatTemplateUsable) {
+            nativeResponseChat(handle, messages.toChatArray(), stopString, maxNewTokens).trim()
+        } else {
+            // Template engine can't render this model; build the prompt ourselves.
+            val handBuilt = buildPrompt(userMessage, imagePath)
+            nativeResponse(handle, handBuilt, maxNewTokens, stopString).trim()
+        }
 
         // Split out the thinking block.
         // When thinkPrefixInjected=true the raw output is: "thoughts\n</think>\nAnswer"
@@ -583,6 +627,9 @@ class MNNLlm private constructor(
      * use-after-free. An abandoned generation can therefore delay this call by up to
      * the remaining token budget.
      */
+    /** Render the prompt MNN would tokenise for [messages] (diagnostic). */
+    fun renderPrompt(messages: Array<String>): String = nativeRenderPrompt(handle, messages)
+
     fun destroy() {
         if (destroyed) return
         destroyed = true
@@ -764,6 +811,7 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeCreate(configPath: String): Long
         @JvmStatic private external fun nativeLoad(handle: Long): Boolean
         @JvmStatic private external fun nativeResponse(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?): String
+        @JvmStatic private external fun nativeRenderPrompt(handle: Long, messages: Array<String>): String
         @JvmStatic private external fun nativeResponseChat(handle: Long, messages: Array<String>, stopString: String?, maxNewTokens: Int): String
         @JvmStatic private external fun nativeResponseStreaming(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?, callback: TokenCallback)
         @JvmStatic private external fun nativeStop(handle: Long)

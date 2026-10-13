@@ -515,4 +515,41 @@ Java_com_mnn_sdk_MNNLlm_nativeResponseChat(
     return env->NewStringUTF(result.c_str());
 }
 
+
+// Diagnostic: render exactly what MNN will feed the tokenizer for these messages.
+// If MNN's jinja chat_template is not loaded, apply_chat_template() silently falls
+// back to concatenating message CONTENTS with no role markers at all
+// (tokenizer.cpp: `if (chat_template_.empty()) { for (m) result += m.second; }`),
+// which produces a prompt the model cannot interpret.
+JNIEXPORT jstring JNICALL
+Java_com_mnn_sdk_MNNLlm_nativeRenderPrompt(JNIEnv* env, jclass, jlong handle,
+                                           jobjectArray messages) {
+    LlmSession* s = toSession(handle);
+    if (!s || !s->llm) return env->NewStringUTF("");
+    jsize n = env->GetArrayLength(messages);
+    std::vector<std::pair<std::string, std::string>> chat;
+    for (jsize i = 0; i + 1 < n; i += 2) {
+        auto jr = static_cast<jstring>(env->GetObjectArrayElement(messages, i));
+        auto jc = static_cast<jstring>(env->GetObjectArrayElement(messages, i + 1));
+        const char* r = env->GetStringUTFChars(jr, nullptr);
+        const char* c = env->GetStringUTFChars(jc, nullptr);
+        chat.emplace_back(std::string(r), std::string(c));
+        env->ReleaseStringUTFChars(jr, r);
+        env->ReleaseStringUTFChars(jc, c);
+    }
+    std::string rendered = s->llm->apply_chat_template(chat);
+    // logcat truncates at the first newline, so escape control chars to see the
+    // whole prompt in one line.
+    std::string esc;
+    esc.reserve(rendered.size() * 2);
+    for (char c : rendered) {
+        if (c == '\n')      esc += "\\n";
+        else if (c == '\r') esc += "\\r";
+        else if (c == '\t') esc += "\\t";
+        else                 esc += c;
+    }
+    LOGI("renderPrompt(): %zu bytes raw: <<<%s>>>", rendered.size(), esc.c_str());
+    return env->NewStringUTF(rendered.c_str());
+}
+
 } // extern "C"
