@@ -7,9 +7,13 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Android%20API%2021%2B-green.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/kotlin-1.9.20-orange.svg)](https://kotlinlang.org)
-[![MNN](https://img.shields.io/badge/MNN-LLM-blueviolet.svg)](https://github.com/alibaba/MNN)
+[![MNN](https://img.shields.io/badge/MNN%20engine-3.6.1-blueviolet.svg)](https://github.com/alibaba/MNN)
 
 **A plug-and-play Kotlin Android SDK for on-device LLM inference powered by [MNN](https://github.com/alibaba/MNN) (Alibaba's Mobile Neural Network framework).**
+
+> Bundled engine: **MNN 3.6.1** — prebuilt libs for `arm64-v8a` + `armeabi-v7a`, taken
+> verbatim from the official [`mnn_3.6.1_android_armv7_armv8_cpu_opencl_vulkan`](https://github.com/alibaba/MNN/releases/tag/3.6.1)
+> release. `MNNEngine.getVersion()` returns `3.6.1`.
 
 Drop it in, call `MNNLlm.load(configPath)`, and you have a fully coroutine-native, streaming, multi-turn LLM — no boilerplate, no manual thread management, no native lifecycle to manage.
 
@@ -291,6 +295,50 @@ If `visual.mnn` is not available on the server the config is patched to `is_visu
 ---
 
 ## Building
+
+### Known constraints (verified on-device against MNN 3.6.1)
+
+**Generation cannot be interrupted.** MNN's decode loop
+(`transformers/llm/engine/src/speculative_decoding/generate.cpp`) breaks only on EOS,
+`max_new_tokens`, or `mContext->status == USER_CANCEL`. That status lives in
+`Llm::mContext`, whose only accessor `getContext()` is defined *inline* and therefore
+exported as no symbol, so it cannot be set from outside the class. MNN also never
+inspects the output stream's state, so failing a custom `std::streambuf` does not stop
+generation either. Both consequences are handled here:
+
+- Cancelling a collector (`take(n)`, `timeout`, `collectLatest`) returns promptly; the
+  abandoned generation finishes on its own in the background.
+- `close()` / `destroy()` **blocks** until any in-flight generation returns, to avoid a
+  use-after-free. Dispose off the main thread if a generation may still be running, or
+  a long answer can stall the caller (and ANR) on teardown.
+
+**Device headroom matters.** Budget roughly `model_size x 1.5` of free RAM. Inference
+under heavy host load has been observed to stall inside `Llm::response` with zero CPU
+consumption; it did not occur on an idle device with ample free memory.
+
+### Upgrading the bundled MNN engine
+
+The prebuilt libs (`mnn-sdk/src/main/jniLibs/`) and the vendored headers
+(`mnn-sdk/src/main/cpp/include/MNN/`) must always come from the **same** MNN release —
+bumping one without the other breaks ABI.
+
+```bash
+VER=3.6.1
+curl -LO https://github.com/alibaba/MNN/releases/download/$VER/mnn_${VER}_android_armv7_armv8_cpu_opencl_vulkan.zip
+unzip -q mnn_${VER}_*.zip
+cp mnn_${VER}_*/arm64-v8a/*.so   mnn-sdk/src/main/jniLibs/arm64-v8a/
+cp mnn_${VER}_*/armeabi-v7a/*.so mnn-sdk/src/main/jniLibs/armeabi-v7a/
+
+git clone --depth 1 --branch $VER https://github.com/alibaba/MNN.git MNN
+rsync -a --delete MNN/include/MNN/ mnn-sdk/src/main/cpp/include/MNN/
+sed -i "s/^MNN_ENGINE_VERSION=.*/MNN_ENGINE_VERSION=$VER/" gradle.properties
+```
+
+Then re-verify the JNI bridge's Llm vtable (see the header comment in
+`include/llm/llm.hpp`) before shipping. It is hand-written and vtable-matched; its
+order happened to be unchanged between 3.4.1 and 3.6.1, but a future release could
+reorder it and silently corrupt every call. CI checks the declared version against the
+headers and resolves every imported MNN symbol against the shipped libraries.
 
 ### Requirements
 

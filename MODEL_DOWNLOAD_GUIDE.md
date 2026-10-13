@@ -1,142 +1,94 @@
 # Model Download Guide
 
-## Issue: 401 Unauthorized Error
+> **Status: current.** This guide describes `AdvancedModelDownloader`, which is what the
+> sample app actually uses. (An earlier draft documented a legacy single-URL
+> downloader with hardcoded placeholder URLs; that class has been removed.)
 
-The default model URLs in the code are placeholders and will return a **401 Unauthorized** error when used. You need to provide your own valid model URLs.
+## How the sample app gets models
 
-## Solution: Use Custom URL Feature
+`AdvancedModelDownloader` fetches MNN's official model catalogue and resolves each
+model's exact file set automatically — you do **not** need to supply URLs.
 
-The app now includes a **"📎 Enter Custom URL..."** option in the download dialog that allows you to download models from any publicly accessible URL.
+1. Tap **⋮ → Download Model**.
+2. Pick a model from the list (quick picks for LFM2-350M, Qwen2.5-0.5B, Qwen3.5-0.8B,
+   Qwen3.5-2B, plus the full catalogue).
+3. Optionally choose a source: **HuggingFace**, **ModelScope** or **Modelers**.
+4. Download. Each file's progress, speed and remaining time are shown; optional
+   files that fail are skipped rather than failing the whole download.
 
-### How to Use:
+The catalogue is cached for 24 hours, so the list still renders offline once loaded.
 
-1. **Open the app** and tap the menu button (⋮)
-2. **Select "Download Model"**
-3. **Choose "📎 Enter Custom URL..."**
-4. **Enter a direct download URL** to an `.mnn` model file
-5. **Tap "Download"**
+### Why models need several files
 
----
+An MNN LLM is not a single `.mnn` file. `AdvancedModelDownloader` reads
+`llm_config.json` first and builds a `ModelProfile` from it, then fetches:
 
-## Where to Get MNN Models
+| File | Required | Purpose |
+|---|---|---|
+| `llm.mnn` | yes | network graph |
+| `llm.mnn.weight` | yes | weights |
+| `llm_config.json` | yes | runtime config |
+| `tokenizer.txt` | yes | tokenizer |
+| `embeddings_bf16.bin` | when `tie_embeddings` | external embedding table |
+| `visual.mnn` / `visual.mnn.weight` / `vit_config.json` | when `is_visual` | vision encoder (VLMs) |
 
-### Option 1: ModelScope (Alibaba's Model Platform)
+Models are stored under the app's private storage:
 
-ModelScope hosts official MNN-converted models:
-
-- **Website:** https://www.modelscope.cn/models?name=MNN
-- **Example Models:**
-  - Qwen2.5-0.5B: https://www.modelscope.cn/models/MNN/Qwen2.5-0.5B-MNN
-  - Qwen2.5-1.5B: https://www.modelscope.cn/models/MNN/Qwen2.5-1.5B-MNN
-
-**To get download URL:**
-1. Visit the model page
-2. Click on "Files and versions" tab
-3. Find the `.mnn` file
-4. Right-click and copy the direct download link
-
-### Option 2: HuggingFace
-
-Some models are available on HuggingFace:
-
-- **Search:** https://huggingface.co/models?other=mnn
-- Look for models with `.mnn` files in their repository
-
-**To get download URL:**
-1. Browse to the model repository
-2. Click on "Files and versions"
-3. Find the `.mnn` file
-4. Click the download icon or right-click → "Copy link"
-
-### Option 3: Convert Your Own Models
-
-Use MNN's official conversion tools to convert models from other formats:
-
-1. **Install MNN Tools:**
-   ```bash
-   pip install MNN
-   ```
-
-2. **Convert a model:**
-   ```bash
-   mnn_converter -f ONNX --modelFile model.onnx --MNNModel output.mnn
-   ```
-
-3. **Host the file:**
-   - Upload to your own server
-   - Use cloud storage with public access (S3, Google Drive, etc.)
-   - Use GitHub releases
-
----
-
-## Updating Default URLs in Code
-
-If you have specific models you use frequently, update the URLs directly in the code:
-
-**File:** `sample/src/main/kotlin/com/mnn/sample/ModelDownloader.kt`
-
-```kotlin
-val AVAILABLE_MODELS = mapOf(
-    "qwen-0.5b" to ModelInfo(
-        name = "Qwen-0.5B",
-        url = "YOUR_ACTUAL_MODEL_URL_HERE",  // <-- Change this
-        size = 512_000_000,
-        description = "Small but capable LLM"
-    )
-)
+```
+filesDir/models/<ModelName>/{llm.mnn, llm.mnn.weight, llm_config.json, tokenizer.txt, ...}
 ```
 
-Replace `YOUR_ACTUAL_MODEL_URL_HERE` with a valid, publicly accessible download URL.
+## Automatic repair
 
----
+If a download is interrupted, the next launch detects the incomplete model and
+re-downloads **only the missing files**. It infers the source repo from the saved
+`source.json`, or probes the known `taobao-mnn` / `alibaba-mnn` layouts.
 
-## Testing Download
+You can also trigger it manually: **⋮ → Manage Models**.
 
-To verify your URL works:
+If a VLM's `visual.mnn` is missing, the config is patched to set `is_visual=false`
+so the model still loads as a text-only LLM instead of failing outright.
 
-1. **Test in browser:** Paste the URL in a browser - it should start downloading the file
-2. **Check file format:** The URL should end with `.mnn` or at least download an `.mnn` file
-3. **Verify accessibility:** Make sure the URL doesn't require authentication
+## Where to get MNN models
 
----
+### Option 1: HuggingFace (used by default)
 
-## Example Valid URL Pattern
+Official MNN-converted models live under the [`taobao-mnn`](https://huggingface.co/taobao-mnn)
+organisation, e.g. `taobao-mnn/Qwen3-0.6B-MNN`, `taobao-mnn/Qwen2.5-0.5B-Instruct-MNN`.
 
-✅ **Good:** 
+Browse models filtered by the `.mnn` format:
+<https://huggingface.co/models?other=mnn>
+
+### Option 2: ModelScope
+
+<https://www.modelscope.cn/models?name=MNN> — e.g. `MNN/Qwen2.5-0.5B-MNN`.
+Get direct file links from the **Files and versions** tab.
+
+### Option 3: Convert your own
+
+```bash
+pip install MNN
+mnnconvert -f ONNX --modelFile model.onnx --MNNModel output.mnn
 ```
-https://www.modelscope.cn/models/MNN/Qwen2.5-0.5B-MNN/resolve/master/qwen2.5-0.5b-mnn.mnn
-```
 
-❌ **Bad (requires auth):**
-```
-https://huggingface.co/private-repo/model.mnn  # Private repo
-```
+For LLM support, export from an HF/ModelScope model directory rather than a plain
+ONNX file; see the [MNN LLM export docs](https://github.com/alibaba/MNN/tree/master/transformers/llm/export).
 
-❌ **Bad (not direct download):**
-```
-https://example.com/models/page.html  # HTML page, not file
-```
+## Troubleshooting
 
----
+**"Enter Custom URL" is not implemented.** The menu entry currently shows a
+"coming soon" toast — the downloader resolves catalogue URLs itself.
 
-## Need Help?
+**Download fails immediately.** Check connectivity, then try the same model from a
+different source (HF ↔ ModelScope). Private/gated HuggingFace repos return 401.
 
-If you continue to get 401 errors:
+**Model fails to load.** Confirm *all* required files for that model are present —
+use **Manage Models → Repair**. A lone `.mnn` file is never sufficient.
 
-1. **Verify the URL** is publicly accessible (test in browser)
-2. **Check if authentication is required** on the hosting platform
-3. **Try a different model source** (ModelScope vs HuggingFace)
-4. **Host your own model** on a server you control
+**Out of memory.** MNN needs roughly `model_size × 1.5` free RAM. Use the
+0.5B/0.6B models on low-memory devices. For the non-LLM interpreter path,
+`MNNConfig(memory = MemoryMode.LOW)` trades speed for a smaller footprint.
 
-The app will now display a detailed error message explaining:
-- What went wrong
-- Where to get valid models
-- How to fix the issue
-
----
-
-## Official MNN Resources
-
-- **MNN GitHub:** https://github.com/alibaba/MNN
-- **MNN Documentation:** https://www.yuque.com/mnn/en
-- **Model Zoo:** https://github.com/alibaba/MNN/tree/master/transformers/llm
+**Inference stalls mid-answer.** A stalled generation (no progress, flat CPU) has
+been observed on a device with very little free RAM under heavy system load. Free up
+memory or move to a larger model class only if the device can afford it.

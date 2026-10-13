@@ -16,7 +16,7 @@ This guide explains how to build the MNN Android SDK from source and integrate M
 
 - [Devbox](https://www.jetpack.io/devbox) - for reproducible environment
 - [direnv](https://direnv.net/) - for automatic environment setup
-- CMake 3.10+ (if building MNN from source)
+- CMake 3.22.1 (required by mnn-sdk/build.gradle.kts for the JNI bridge)
 
 ## Development Environment Setup
 
@@ -85,14 +85,12 @@ You have two options:
 3. Extract and place them in the appropriate directories:
 
 ```bash
-mnn-sdk/libs/
+mnn-sdk/src/main/jniLibs/
 ├── arm64-v8a/
 │   └── libMNN.so
 ├── armeabi-v7a/
 │   └── libMNN.so
-├── x86/
 │   └── libMNN.so
-└── x86_64/
     └── libMNN.so
 ```
 
@@ -120,9 +118,11 @@ cmake .. \
 make -j$(nproc)
 
 # Copy built library
-cp libMNN.so /path/to/mnn_android_sdk/mnn-sdk/libs/arm64-v8a/
+cp libMNN.so /path/to/mnn_android_sdk/mnn-sdk/src/main/jniLibs/arm64-v8a/
 
-# Repeat for other architectures (armeabi-v7a, x86, x86_64)
+# Repeat for armeabi-v7a. The SDK ships arm64-v8a + armeabi-v7a ONLY
+# (see `ndk.abiFilters` in mnn-sdk/build.gradle.kts); there are no x86
+# builds, so the standard x86 emulator cannot run this AAR.
 ```
 
 For detailed MNN build instructions, see [MNN Android Build Guide](https://www.yuque.com/mnn/en/build_android).
@@ -212,16 +212,17 @@ mnn_android_sdk/
 │   │   │   │       ├── MNNInterpreter.kt
 │   │   │   │       ├── MNNTensor.kt
 │   │   │   │       ├── MNNConfig.kt
-│   │   │   │       └── MNNException.kt
+│   │   │   │       ├── MNNException.kt
+│   │   │   │       ├── LlmPrompt.kt
+│   │   │   │       ├── MNNStubImpl.kt
+│   │   │   │       └── TokenCountUtils.kt
 │   │   │   ├── cpp/          # JNI bridge (if needed)
 │   │   │   └── AndroidManifest.xml
 │   │   └── test/             # Unit tests
 │   └── libs/                 # Native libraries (.so)
 │       ├── arm64-v8a/
 │       ├── armeabi-v7a/
-│       ├── x86/
-│       └── x86_64/
-├── sample/                   # Sample application
+│       ├── sample/                   # Sample application
 │   ├── build.gradle.kts
 │   └── src/
 └── docs/                     # Documentation
@@ -294,7 +295,7 @@ mnn_android_sdk/
 
 **Solution:** Ensure `.so` files are in correct directories:
 ```bash
-ls -R mnn-sdk/libs/
+ls -R mnn-sdk/src/main/jniLibs/
 ```
 
 ### NDK Not Found

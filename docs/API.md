@@ -376,41 +376,47 @@ val config = MNNConfig(
 
 ### ForwardType
 
-Computation backend options:
+Computation backend options. These values mirror MNN's `MNNForwardType` enum and are
+cast straight into `MNN::ScheduleConfig::type` by the JNI layer.
 
-- `ForwardType.CPU` - CPU backend (default)
-- `ForwardType.METAL` - Metal (iOS)
-- `ForwardType.OPENCL` - OpenCL (GPU)
-- `ForwardType.OPENGL` - OpenGL (GPU)
-- `ForwardType.VULKAN` - Vulkan (GPU)
-- `ForwardType.TENSORRT` - TensorRT (NVIDIA)
-- `ForwardType.CUDA` - CUDA (NVIDIA)
-- `ForwardType.HIAI` - Huawei NPU
-- `ForwardType.NN` - Android NN API
+- `ForwardType.CPU` (= 0) - CPU backend (default, always available)
+- `ForwardType.METAL` (= 1) - Metal (iOS only)
+- `ForwardType.CUDA` (= 2) - CUDA (NVIDIA, desktop only)
+- `ForwardType.OPENCL` (= 3) - OpenCL (Android GPU)
+- `ForwardType.AUTO` (= 4) - first available non-CPU backend, falls back to CPU
+- `ForwardType.NN` (= 5) - Android 8.1+ NNAPI
+- `ForwardType.OPENGL` (= 6) - legacy OpenGL (Android GPU)
+- `ForwardType.VULKAN` (= 7) - Vulkan (Android GPU)
+- `ForwardType.HEXAGON` (= 10) - Qualcomm Hexagon HTP DSP (MNN 3.6+)
+- `ForwardType.MUSA` (= 15) - Moore Threads MUSA GPU (MNN 3.6+)
+
+> `TENSORRT` and `HIAI` were removed: neither is a valid `MNNForwardType`, and both
+> silently resolved to the wrong backend.
 
 ### Precision
 
-Computation precision:
+Computation precision, mirroring `MNN::BackendConfig::PrecisionMode`:
 
-- `Precision.NORMAL` - FP32 (default)
-- `Precision.LOW` - FP16 (faster, less accurate)
-- `Precision.HIGH` - High precision
-- `Precision.LOW_BF16` - BF16 low precision
+- `Precision.NORMAL` (= 0) - FP32 (default)
+- `Precision.HIGH` (= 1) - higher precision, slower
+- `Precision.LOW` (= 2) - FP16, faster and smaller, slightly less accurate
+- `Precision.LOW_BF16` (= 3) - BF16, for hardware without fast FP16
 
 ### PowerMode
 
-Power consumption mode:
+Power consumption mode, mirroring `MNN::BackendConfig::PowerMode`:
 
-- `PowerMode.NORMAL` - Normal mode (default)
-- `PowerMode.LOW` - Low power (saves battery)
-- `PowerMode.HIGH` - High performance (uses more battery)
+- `PowerMode.NORMAL` (= 0) - no throttling hint (default)
+- `PowerMode.HIGH` (= 1) - maximum throughput, higher battery draw
+- `PowerMode.LOW` (= 2) - saves battery at the cost of speed
 
 ### MemoryMode
 
-Memory usage mode:
+Memory usage mode, mirroring `MNN::BackendConfig::MemoryMode`:
 
-- `MemoryMode.NORMAL` - Normal usage (default)
-- `MemoryMode.LOW` - Low memory (slower but uses less RAM)
+- `MemoryMode.NORMAL` (= 0) - default
+- `MemoryMode.HIGH` (= 1) - favour buffer reuse over footprint
+- `MemoryMode.LOW` (= 2) - minimise peak memory, slower
 
 ---
 

@@ -203,3 +203,72 @@ None - ready to proceed with Phase 1
 ---
 
 **See [INTEGRATION_PLAN.md](INTEGRATION_PLAN.md) for detailed implementation guide**
+
+---
+
+## Update: MNN 3.4.1 -> 3.6.1 (engine upgrade + correctness pass)
+
+**Engine.** Bundled prebuilts and vendored headers upgraded to MNN 3.6.1. ABI-verified:
+the `Llm` vtable order is unchanged from 3.4.1, and every MNN symbol the JNI bridge
+imports resolves against the shipped `libMNN.so` / `libMNN_Express.so` / `libllm.so`
+on both ABIs. CI re-runs both checks on every push.
+
+**GAP 9 - metrics timing: RESOLVED (differently than planned).** MNN 3.6 *does* measure
+`prefill_us` / `decode_us` / `ttfa_us` internally, but exposes them only via
+`Llm::getContext()`, which is defined *inline* in the upstream header and reads a
+protected member - so `libllm.so` exports no symbol for it and it cannot be called from
+outside the class. Instead the first token MNN emits is timestamped in
+`TimingStreambuf`, making `[start, first token)` the prefill window and the remainder
+the decode window. The fabricated 30/70 split is gone. `Metrics` also gained
+`sampleMs`, `ttfaMs` and `prefillTokensPerSec`.
+
+**GAP 7 - tests: LARGELY RESOLVED on the JVM side.**
+- 54 JVM unit tests (was 17). The previously untested `MNNLlm` prompt/capability logic
+  is extracted into `LlmPrompt.kt` (`LlmConfigAnalyzer` + `PromptComposer`) and covered
+  by 32 tests: ChatML/GENERIC detection, stop-string selection, thinking detection,
+  vision gating, `extractThinking` edge cases, ChatML/GENERIC composition, image-tag
+  emission and metric math.
+- `MNNConfigEnumContractTest` pins every public config constant to MNN's real enum
+  values. Mutation-tested: restoring `ForwardType.OPENCL = 2` makes it fail.
+- `MNNLlmInstrumentedTest` covers the device-only surface (library load + version, real
+  `chat()`, streaming, mid-generation cancellation, multi-turn, invalid-config
+  handling). Model-dependent cases `Assume` so they skip without weights.
+
+**GAP 8 - CI: RESOLVED.** `.github/workflows/build.yml` builds the AAR (compiling the
+JNI bridge), runs unit tests and lint, builds the sample with R8 enabled, and asserts
+(a) the declared MNN version matches the vendored headers and (b) no SDK class was
+renamed by R8 (which would break `Java_com_mnn_sdk_*` symbol lookup).
+
+**Bugs found and fixed during the upgrade:**
+- `MNNConfig.ForwardType` / `Precision` / `PowerMode` did not match MNN's enums and were
+  raw-cast by the JNI layer. `ForwardType.VULKAN` silently selected `AUTO`, `OPENCL`
+  selected `CUDA`, and `Precision.LOW` actually *raised* precision. `TENSORRT` and
+  `HIAI` were never valid MNN forward types and have been removed.
+- `MNNConfig.memory` was accepted but never passed to JNI. Now wired through to
+  `BackendConfig::memory`.
+- `create()` returned a live handle for an unparseable `llm_config.json`, deferring a
+  confusing failure into `load()`. It now returns null and logs why.
+- Cancelling a stream collector hung indefinitely. The blocking JNI call ran on the
+  `callbackFlow` producer coroutine, so `awaitClose` - the only hook that reaches
+  `nativeStop` - could never run. Generation now runs on a detached scope so
+  cancellation returns promptly; `destroy()` waits for in-flight generations before
+  freeing the native handle to avoid a use-after-free.
+- The blocking path's `CaptureStreambuf` originally managed its own put area; a bare
+  `std::streambuf` with no put area makes MNN's decode loop block forever at 0% CPU
+  (verified on-device). It now tees into a real `std::stringbuf`.
+- Dead code removed: legacy `ModelDownloader.kt` (placeholder URLs, unreferenced),
+  orphan `activity_main.xml`, disabled `MNNStubTest.kt.bak`, two unreferenced JNI entry
+  points, the unused `mockk` dependency and the no-op `viewBinding` flag.
+- Obsolete `LLM_DEMO_STATUS.md` deleted; `MODEL_DOWNLOAD_GUIDE.md`, `docs/BUILDING.md`
+  and `docs/API.md` corrected to match the code.
+
+**Still open / blocked:**
+- **GAP 1 (KV-cache reuse) remains open.** 3.6.1 does export `reuse_kv()`,
+  `setKVCacheInfo()`, `getCurrentHistory()`, `eraseHistory()` and `syncPromptCache()`,
+  so the API gap is closed, but wiring it correctly (and proving the cache stays valid
+  across turns) is real work, not a rename.
+- **GAP 4 (non-ChatML templates) remains open.** Llama-3 / Phi / Gemma / DeepSeek still
+  fall back to `GENERIC`.
+- **Device coverage is narrow.** Validation ran against Qwen3-0.6B-MNN only. Vision
+  (VLM) models have never been exercised on hardware, and the live thinking path was
+  detected but never actually produced a `<think>` block in the runs observed.
