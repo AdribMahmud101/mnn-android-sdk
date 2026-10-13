@@ -154,9 +154,42 @@ class MNNLlm private constructor(
             // (with <think> prefix and history) is passed directly to the tokenizer without
             // being re-wrapped as a "user" message. This also preserves the ExecutorScope
             // that response(string) sets up, which is required for VLM image tokenisation.
-            nativeSetConfig(handle, """{"use_template":false}""")
+            //
+            // Arm the generation timeout at the same time: MNN re-reads timeout_ms from the
+            // merged config on every generation and aborts with LlmStatus::TIMEOUT once
+            // prefill+decode exceeds it. That turns an unbounded generation (which cannot
+            // be cancelled - see [destroy]) into a bounded one.
+            applyEngineConfig()
         }
         return ok
+    }
+
+    /**
+     * Hard wall-clock limit for a single generation, in milliseconds.
+     *
+     * MNN checks this after prefill and on every decode iteration, then aborts the
+     * request with `LlmStatus::TIMEOUT`. Because MNN offers no way to *cancel* a
+     * generation (its decode loop only honours `mContext->status == USER_CANCEL`,
+     * which is unreachable from outside the class), this timeout is the only reliable
+     * way to stop a runaway or pathologically slow generation.
+     *
+     * Set to `0` (or a negative value) to disable and let generations run unbounded.
+     * Defaults to [DEFAULT_GENERATION_TIMEOUT_MS].
+     */
+    var generationTimeoutMs: Int = DEFAULT_GENERATION_TIMEOUT_MS
+        set(value) {
+            field = value
+            if (handle != 0L) applyEngineConfig()
+        }
+
+    private fun applyEngineConfig() {
+        val timeout = generationTimeoutMs
+        val json = if (timeout > 0) {
+            """{"use_template":false,"timeout_ms":$timeout}"""
+        } else {
+            """{"use_template":false}"""
+        }
+        nativeSetConfig(handle, json)
     }
 
     /**
@@ -461,6 +494,12 @@ class MNNLlm private constructor(
     )
 
     companion object {
+        /**
+         * Default per-generation wall-clock budget: generous enough that a normal answer
+         * is never truncated, tight enough that a pathological run cannot wedge the app.
+         */
+        const val DEFAULT_GENERATION_TIMEOUT_MS = 120_000
+
         init {
             System.loadLibrary("llm")
             System.loadLibrary("mnn-jni-bridge")
@@ -562,6 +601,19 @@ class MNNLlm private constructor(
 
             val handle = nativeCreate(configPath)
             if (handle == 0L) return null
+
+            if (chatStyle == ChatStyle.GENERIC) {
+                // A non-ChatML model gets the plain "User:/Assistant:" fallback. That is
+                // a real degradation: the model is almost certainly trained on a
+                // different template (Llama-3, Phi, Gemma, Mistral, ...), so output
+                // quality suffers. Say so loudly rather than silently returning garbage.
+                Log.w(
+                    "MNNLlm",
+                    "No ChatML markers found in $configPath - falling back to the " +
+                        "generic User:/Assistant: template. This model is probably " +
+                        "trained on a different chat template and may answer poorly."
+                )
+            }
             return MNNLlm(handle, chatStyle, stopString, bosToken, supportsThinking, isVisual)
         }
 

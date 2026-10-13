@@ -166,6 +166,38 @@ class MNNLlmInstrumentedTest {
         }
     }
 
+    /**
+     * Proves the engine-level generation timeout is actually armed. MNN cannot be
+     * *cancelled* (its decode loop only honours mContext->status == USER_CANCEL, which
+     * is unreachable), so timeout_ms is the only reliable bound on a runaway generation.
+     * A 1 ms budget must abort the request almost immediately instead of generating.
+     */
+    @Test
+    fun generationTimeoutBoundsARunawayGeneration(): Unit = kotlinx.coroutines.runBlocking {
+        val modelDir = discoverModel()
+        assumeTrue("No model found in files/models; skipping", modelDir != null)
+        val config = File(modelDir!!, "llm_config.json").absolutePath
+
+        val llm = MNNLlm.load(config)
+        try {
+            llm.generationTimeoutMs = 1
+            val start = System.currentTimeMillis()
+            val result = llm.chat(
+                "Write a very long detailed essay about the history of computing.",
+                maxNewTokens = 1024
+            )
+            val elapsed = System.currentTimeMillis() - start
+            Log.i(tag, "timeout-aborted generation in ${elapsed}ms, ${result.text.length} chars")
+            assertTrue(
+                "1ms timeout should abort long before a full essay (took ${elapsed}ms)",
+                elapsed < 30_000
+            )
+        } finally {
+            llm.generationTimeoutMs = MNNLlm.DEFAULT_GENERATION_TIMEOUT_MS
+            llm.close()
+        }
+    }
+
     @Test
     fun loadRejectsGarbageConfigWithoutCrashing() {
         val ctx = InstrumentationRegistry.getInstrumentation().targetContext
