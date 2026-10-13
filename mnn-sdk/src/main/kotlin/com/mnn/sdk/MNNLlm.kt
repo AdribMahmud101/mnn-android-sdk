@@ -366,30 +366,35 @@ class MNNLlm private constructor(
         // The call stays counted in inFlightGeneration for its whole life - including
         // after we abandon it - so destroy() can never free the native handle
         // underneath a still-running generation.
-        inFlightGeneration.incrementAndGet()
-        try {
-            return withContext(Dispatchers.IO) {
-                val work = async { response(userMessage, imagePath, maxNewTokens) }
-                try {
-                    if (budget <= 0) {
-                        LlmResult(work.await(), lastThinking)
-                    } else {
-                        withTimeout(budget.toLong()) { LlmResult(work.await(), lastThinking) }
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    // Really interrupt it: nativeStop sets LlmContext::status =
-                    // USER_CANCEL, which MNN's decode loop breaks on at its next
-                    // iteration. Then allow a short grace period for it to unwind.
-                    nativeStop(handle)
-                    withTimeoutOrNull(CANCEL_GRACE_MS) { work.await() }
-                    throw MNNException(
-                        "Generation exceeded the ${budget}ms budget. The device may be " +
-                        "low on memory (MNN needs roughly model_size x 1.5 of free RAM)."
-                    )
-                }
+        return withContext(Dispatchers.IO) {
+            // The counter must be held by the coroutine that actually owns the
+            // blocking native call, NOT by chat(). If chat() abandons it after the
+            // deadline, chat() returns and decrements immediately - but the native
+            // call is still running, so destroy() would free the handle underneath
+            // it. Holding the count inside the async makes it track the real
+            // lifetime of the native call, abandoned or not.
+            val work = async {
+                inFlightGeneration.incrementAndGet()
+                try { response(userMessage, imagePath, maxNewTokens) }
+                finally { inFlightGeneration.decrementAndGet() }
             }
-        } finally {
-            inFlightGeneration.decrementAndGet()
+            try {
+                if (budget <= 0) {
+                    LlmResult(work.await(), lastThinking)
+                } else {
+                    withTimeout(budget.toLong()) { LlmResult(work.await(), lastThinking) }
+                }
+            } catch (e: TimeoutCancellationException) {
+                // Really interrupt it: nativeStop sets LlmContext::status =
+                // USER_CANCEL, which MNN's decode loop breaks on at its next
+                // iteration. Then allow a short grace period for it to unwind.
+                nativeStop(handle)
+                withTimeoutOrNull(CANCEL_GRACE_MS) { work.await() }
+                throw MNNException(
+                    "Generation exceeded the ${budget}ms budget. The device may be " +
+                    "low on memory (MNN needs roughly model_size x 1.5 of free RAM)."
+                )
+            }
         }
     }
 
