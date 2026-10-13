@@ -447,4 +447,72 @@ Java_com_mnn_sdk_MNNLlm_nativeStop(JNIEnv*, jclass, jlong handle) {
     s->stop_flag.store(true, std::memory_order_relaxed);
 }
 
+
+// Chat turn using MNN's native history API.
+//
+// Upstream's own Android app (apps/Android/MnnLlmChat) drives multi-turn this way:
+// build a ChatMessages vector and hand it to Llm::response(ChatMessages&, ...), which
+// applies the model's own chat template and manages the KV cache itself. It does NOT
+// rebuild ChatML by hand, does NOT set use_template:false, and critically does NOT call
+// Llm::reset() between turns.
+//
+// Calling reset() before every turn - as this SDK previously did - sets
+// mMeta->remove = mMeta->previous, which mutates KV-cache trimming state; regenerating
+// immediately afterwards wedged the second turn on-device. Delegating history to MNN
+// removes that class of bug along with the whole hand-rolled template path.
+//
+// messages is a flat String[] of alternating role, content pairs.
+JNIEXPORT jstring JNICALL
+Java_com_mnn_sdk_MNNLlm_nativeResponseChat(
+    JNIEnv* env, jclass /*cls*/, jlong handle,
+    jobjectArray messages, jstring jStopString, jint maxNewTokens) {
+    LlmSession* s = toSession(handle);
+    if (!s || !s->llm) return env->NewStringUTF("");
+
+    jsize n = env->GetArrayLength(messages);
+    std::vector<std::pair<std::string, std::string>> chat;
+    chat.reserve(n / 2);
+    for (jsize i = 0; i + 1 < n; i += 2) {
+        auto jrole   = static_cast<jstring>(env->GetObjectArrayElement(messages, i));
+        auto jcontent = static_cast<jstring>(env->GetObjectArrayElement(messages, i + 1));
+        const char* r = env->GetStringUTFChars(jrole, nullptr);
+        const char* c = env->GetStringUTFChars(jcontent, nullptr);
+        chat.emplace_back(std::string(r), std::string(c));
+        env->ReleaseStringUTFChars(jrole, r);
+        env->ReleaseStringUTFChars(jcontent, c);
+        env->DeleteLocalRef(jrole);
+        env->DeleteLocalRef(jcontent);
+    }
+
+    const char* stopStr = nullptr;
+    std::string stopStorage;
+    if (jStopString != nullptr) {
+        const char* s2 = env->GetStringUTFChars(jStopString, nullptr);
+        stopStorage = s2;
+        env->ReleaseStringUTFChars(jStopString, s2);
+        stopStr = stopStorage.c_str();
+    }
+
+    prepareGeneration(s->llm);
+
+    CaptureStreambuf capture;
+    capture.beginTiming();
+    std::ostream out(&capture);
+
+    auto t0 = std::chrono::steady_clock::now();
+    s->llm->response(chat, &out, stopStr, static_cast<int>(maxNewTokens));
+    auto t1 = std::chrono::steady_clock::now();
+
+    std::string result = capture.text();
+    int64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    s->prefill_ms = capture.prefillMs();
+    s->decode_ms  = capture.decodeMs(total_ms);
+    s->ttfa_ms    = capture.ttfaMs();
+
+    LOGI("responseChat(): total=%lldms prefill=%lldms decode=%lldms turns=%zu",
+         (long long)total_ms, (long long)s->prefill_ms, (long long)s->decode_ms, chat.size());
+
+    return env->NewStringUTF(result.c_str());
+}
+
 } // extern "C"

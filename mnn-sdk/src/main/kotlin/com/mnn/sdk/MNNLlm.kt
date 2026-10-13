@@ -209,10 +209,12 @@ class MNNLlm private constructor(
         // Track whether we injected <think> as an open prefix (so extractThinking knows
         // the raw output starts with thinking content, not a full <think>…</think> block).
         val thinkPrefixInjected = supportsThinking && enableThinking
-        val fullPrompt = buildPrompt(userMessage, imagePath)
-        // Reset KV-cache so the full history prefill starts from scratch.
-        nativeReset(handle)
-        val raw = nativeResponse(handle, fullPrompt, maxNewTokens, stopString).trim()
+        val messages = buildMessages(userMessage, imagePath)
+        val fullPrompt = messages.joinToString("\n") { (r, c) -> "$r: $c" }
+        // No nativeReset() here on purpose: MNN owns the KV cache when driven through
+        // the ChatMessages API, and calling Llm::reset() between turns mutates
+        // mMeta->remove, which wedged the second turn on-device.
+        val raw = nativeResponseChat(handle, messages.toChatArray(), stopString, maxNewTokens).trim()
 
         // Split out the thinking block.
         // When thinkPrefixInjected=true the raw output is: "thoughts\n</think>\nAnswer"
@@ -248,6 +250,56 @@ class MNNLlm private constructor(
      * and the current user turn. Controls the assistant prefix for thinking mode.
      * Delegates to [promptBuilder] when set.
      */
+    /**
+     * Flat role/content pairs for MNN's native `response(ChatMessages, ...)` API.
+     *
+     * MNN applies the model's own chat template from these, so we no longer hand-build
+     * ChatML text and no longer have to guess each model's format. Returns the complete
+     * conversation including the current user turn.
+     */
+    private fun buildMessages(userMessage: String, imagePath: String?): List<Pair<String, String>> {
+        promptBuilder?.let { return parsePrompt(it(history.toList(), userMessage, imagePath, systemPrompt)) }
+        val out = mutableListOf<Pair<String, String>>("system" to systemPrompt)
+        for ((u, a) in history) {
+            out += "user" to u
+            out += "assistant" to a
+        }
+        out += "user" to if (imagePath != null && isVisual) "<img>$imagePath</img>$userMessage" else userMessage
+        return out
+    }
+
+    /** Flatten role/content pairs into the String[] the JNI layer expects. */
+    private fun List<Pair<String, String>>.toChatArray(): Array<String> =
+        Array(size * 2) { i -> this[i / 2].let { if (i % 2 == 0) it.first else it.second } }
+
+    /**
+     * Best-effort recovery of role/content pairs from a custom promptBuilder's output,
+     * so promptBuilder callers still benefit from MNN's native template handling.
+     */
+    private fun parsePrompt(prompt: String): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        var role: String? = null
+        val buf = StringBuilder()
+        fun flush() {
+            val r = role ?: return
+            val text = buf.toString().trim()
+            if (text.isNotEmpty()) out += r to text
+            buf.clear()
+        }
+        for (line in prompt.lines()) {
+            val t = line.trim()
+            when {
+                t.equals("system", true) || t.endsWith("system") -> { flush(); role = "system" }
+                t.endsWith("user") -> { flush(); role = "user" }
+                t.endsWith("assistant") -> { flush(); role = "assistant" }
+                role != null -> { if (buf.isNotEmpty()) buf.append('\n'); buf.append(line) }
+                else -> out += "user" to line
+            }
+        }
+        flush()
+        return out.ifEmpty { listOf("user" to prompt) }
+    }
+
     private fun buildPrompt(userMessage: String, imagePath: String?): String {
         promptBuilder?.let { return it(history.toList(), userMessage, imagePath, systemPrompt) }
         val h = history.toList()
@@ -664,6 +716,7 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeCreate(configPath: String): Long
         @JvmStatic private external fun nativeLoad(handle: Long): Boolean
         @JvmStatic private external fun nativeResponse(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?): String
+        @JvmStatic private external fun nativeResponseChat(handle: Long, messages: Array<String>, stopString: String?, maxNewTokens: Int): String
         @JvmStatic private external fun nativeResponseStreaming(handle: Long, prompt: String, maxNewTokens: Int, stopString: String?, callback: TokenCallback)
         @JvmStatic private external fun nativeStop(handle: Long)
         @JvmStatic private external fun nativeReset(handle: Long)
