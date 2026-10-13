@@ -12,6 +12,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.async
+import kotlinx.coroutines.TimeoutCancellationException
 import org.json.JSONObject
 import java.io.File
 
@@ -352,9 +356,41 @@ class MNNLlm private constructor(
         userMessage: String,
         imagePath: String? = null,
         maxNewTokens: Int = 1024
-    ): LlmResult = withContext(Dispatchers.IO) {
-        val text = response(userMessage, imagePath, maxNewTokens)
-        LlmResult(text, lastThinking)
+    ): LlmResult {
+        val budget = generationTimeoutMs
+        // MNN blocks inside its decode loop and, on a memory-starved device, can stay
+        // there indefinitely at 0% CPU. Run the blocking call on a worker and race it
+        // against a deadline so a stalled generation surfaces as an actionable error
+        // instead of a call that never returns.
+        //
+        // The call stays counted in inFlightGeneration for its whole life - including
+        // after we abandon it - so destroy() can never free the native handle
+        // underneath a still-running generation.
+        inFlightGeneration.incrementAndGet()
+        try {
+            return withContext(Dispatchers.IO) {
+                val work = async { response(userMessage, imagePath, maxNewTokens) }
+                try {
+                    if (budget <= 0) {
+                        LlmResult(work.await(), lastThinking)
+                    } else {
+                        withTimeout(budget.toLong()) { LlmResult(work.await(), lastThinking) }
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    // Really interrupt it: nativeStop sets LlmContext::status =
+                    // USER_CANCEL, which MNN's decode loop breaks on at its next
+                    // iteration. Then allow a short grace period for it to unwind.
+                    nativeStop(handle)
+                    withTimeoutOrNull(CANCEL_GRACE_MS) { work.await() }
+                    throw MNNException(
+                        "Generation exceeded the ${budget}ms budget. The device may be " +
+                        "low on memory (MNN needs roughly model_size x 1.5 of free RAM)."
+                    )
+                }
+            }
+        } finally {
+            inFlightGeneration.decrementAndGet()
+        }
     }
 
     /**
@@ -499,6 +535,9 @@ class MNNLlm private constructor(
          * is never truncated, tight enough that a pathological run cannot wedge the app.
          */
         const val DEFAULT_GENERATION_TIMEOUT_MS = 120_000
+
+        /** How long to wait for MNN to unwind after a cancel before giving up. */
+        private const val CANCEL_GRACE_MS = 5_000L
 
         init {
             System.loadLibrary("llm")

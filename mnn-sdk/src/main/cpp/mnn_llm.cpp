@@ -33,6 +33,28 @@ inline LlmSession* toSession(jlong handle) {
     return reinterpret_cast<LlmSession*>(static_cast<intptr_t>(handle));
 }
 
+
+// MNN's LlmContext::status is sticky: once it reaches a terminal state the decode
+// loop breaks on the very first iteration of the NEXT request too, so a single
+// cancelled generation would silently disable every later one. Reset it back to
+// RUNNING before each request. alibaba/MNN's own Android app does the same
+// (restoreAndroidSteppingStatusIfNeeded in
+// apps/Android/MnnLlmChat/app/src/main/cpp/llm_session.cpp).
+inline void prepareGeneration(MNN::Transformer::Llm* llm) {
+    if (!llm) return;
+    auto* ctx = llm->getContext();
+    if (!ctx) return;
+    auto* m = const_cast<MNN::Transformer::LlmContext*>(ctx);
+    if (m->status == MNN::Transformer::LlmStatus::USER_CANCEL ||
+        m->status == MNN::Transformer::LlmStatus::NORMAL_FINISHED ||
+        m->status == MNN::Transformer::LlmStatus::MAX_TOKENS_FINISHED ||
+        m->status == MNN::Transformer::LlmStatus::TIMEOUT ||
+        m->status == MNN::Transformer::LlmStatus::INTERNAL_ERROR ||
+        m->status == MNN::Transformer::LlmStatus::NOT_LOADED) {
+        m->status = MNN::Transformer::LlmStatus::RUNNING;
+    }
+}
+
 } // anonymous namespace
 
 // Splits a generation request into prefill and decode using the arrival time of
@@ -224,6 +246,7 @@ Java_com_mnn_sdk_MNNLlm_nativeResponse(JNIEnv* env, jclass /*cls*/,
     // executor context). Template wrapping is disabled permanently at load time via
     // nativeSetConfig({"use_template":false}), so our pre-built ChatML prompt passes
     // through to the tokenizer unchanged.
+    prepareGeneration(s->llm);
     CaptureStreambuf capture;
     capture.beginTiming();
     std::ostream out(&capture);
@@ -379,6 +402,7 @@ Java_com_mnn_sdk_MNNLlm_nativeResponseStreaming(JNIEnv* env, jclass /*cls*/,
     }
 
     s->stop_flag.store(false, std::memory_order_relaxed);
+    prepareGeneration(s->llm);
     CallbackStreambuf cbBuf(env, callback, onToken, s->stop_flag);
     cbBuf.beginTiming();
     std::ostream cbStream(&cbBuf);
@@ -395,12 +419,32 @@ Java_com_mnn_sdk_MNNLlm_nativeResponseStreaming(JNIEnv* env, jclass /*cls*/,
          (long long)total_ms, (long long)s->prefill_ms, (long long)s->decode_ms);
 }
 
-// Interrupt an in-progress nativeResponseStreaming() call. Thread-safe: sets an atomic
-// flag that CallbackStreambuf checks on every token; MNN sees !os->good() and stops.
+// Interrupt an in-progress generation.
+//
+// Sets mContext->status = USER_CANCEL, which is the condition MNN's decode loop
+// actually tests (generate.cpp: `while (len < max_token) { if (status ==
+// USER_CANCEL || status == INTERNAL_ERROR) break; ... }`). This is a genuine
+// interrupt, not the streambuf trick: MNN never inspects the output stream's
+// state, so failing a custom streambuf only suppresses further callbacks.
+//
+// getContext() has no exported symbol because it is defined inline in
+// llm/llm.hpp; including the real upstream header lets the compiler emit it
+// here. alibaba/MNN's own Android app reaches LlmContext the same way.
 JNIEXPORT void JNICALL
 Java_com_mnn_sdk_MNNLlm_nativeStop(JNIEnv*, jclass, jlong handle) {
     LlmSession* s = toSession(handle);
-    if (s) s->stop_flag.store(true, std::memory_order_relaxed);
+    if (!s || !s->llm) return;
+
+    // 1. Ask MNN to abort at its next decode-iteration boundary.
+    auto* ctx = s->llm->getContext();
+    if (ctx) {
+        auto* mutable_ctx = const_cast<MNN::Transformer::LlmContext*>(ctx);
+        mutable_ctx->status = MNN::Transformer::LlmStatus::USER_CANCEL;
+    }
+
+    // 2. Also raise the flag that CallbackStreambuf checks, so token delivery
+    //    stops immediately even between MNN's status checks.
+    s->stop_flag.store(true, std::memory_order_relaxed);
 }
 
 } // extern "C"
