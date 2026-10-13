@@ -22,7 +22,8 @@ class MNNInterpreter internal constructor(
             config.forwardType,
             config.numThreads,
             config.precision,
-            config.power
+            config.power,
+            config.memory
         )
         if (sessionPtr == 0L) {
             throw MNNException("Failed to create MNN session")
@@ -251,7 +252,8 @@ class MNNInterpreter internal constructor(
         forwardType: Int,
         numThreads: Int,
         precision: Int,
-        powerMode: Int
+        powerMode: Int,
+        memoryMode: Int
     ): Long
     
     private external fun nativeRun(interpreterPtr: Long, sessionPtr: Long): Boolean

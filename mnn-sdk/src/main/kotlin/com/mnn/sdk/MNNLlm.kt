@@ -1,6 +1,12 @@
 package com.mnn.sdk
 
+import android.util.Log
+
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -61,18 +67,42 @@ class MNNLlm private constructor(
         val prefillMs: Long,
         val decodeMs: Long,
         val promptTokens: Int,
-        val generatedTokens: Int
+        val generatedTokens: Int,
+        /** Time spent in the sampler, when reported by the engine. */
+        val sampleMs: Long = 0L,
+        /** Time to first answer token. */
+        val ttfaMs: Long = 0L
     ) {
         val tokensPerSec: Double
             get() = if (decodeMs > 0) generatedTokens * 1000.0 / decodeMs else 0.0
 
+        /** Prefill throughput. */
+        val prefillTokensPerSec: Double
+            get() = if (prefillMs > 0) promptTokens * 1000.0 / prefillMs else 0.0
+
         fun summary(): String =
             "Prefill: ${prefillMs}ms | Decode: ${decodeMs}ms | " +
+            "TTFA: ${ttfaMs}ms | " +
             "Generated: $generatedTokens tokens | ${String.format("%.1f", tokensPerSec)} tok/s"
     }
 
     // Conversation history: list of (userMessage, cleanAssistantReply — no think block)
     private val history = mutableListOf<Pair<String, String>>()
+
+    // The user turn currently being generated, so finalizeResponse() can record it
+    // in history. Set by both the blocking and streaming paths before generation starts.
+    private var currentUserTurn: String = ""
+
+    // Detached scope for streaming generations. Deliberately NOT a child of any flow's
+    // scope, so downstream cancellation returns immediately instead of blocking until
+    // MNN finishes a generation that cannot be interrupted.
+    private val generationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Number of native generations currently executing. destroy() blocks on this
+    // reaching zero before releasing the native handle.
+    private val inFlightGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile private var destroyed = false
 
     var systemPrompt: String = "You are a helpful assistant. Always respond in the same language the user writes in."
 
@@ -173,23 +203,8 @@ class MNNLlm private constructor(
      *  2. Open prefix injected into prompt: raw = `thoughts</think>answer`
      *     (thinkPrefixInjected=true — we already put `<think>\n` at end of prompt)
      */
-    private fun extractThinking(raw: String, thinkPrefixInjected: Boolean): Pair<String?, String> {
-        val start = raw.indexOf("<think>")
-        val end   = raw.indexOf("</think>")
-        // Case 1: full <think>…</think> block present in the raw output.
-        if (start != -1 && end != -1 && end > start) {
-            val thinking   = raw.substring(start + 7, end).trim()
-            val afterThink = raw.substring(end + 8).trim()
-            return Pair(thinking.ifEmpty { null }, afterThink)
-        }
-        // Case 2: we injected <think> in the prompt prefix, so raw starts with thinking content.
-        if (thinkPrefixInjected && end != -1) {
-            val thinking   = raw.substring(0, end).trim()
-            val afterThink = raw.substring(end + 8).trim()
-            return Pair(thinking.ifEmpty { null }, afterThink)
-        }
-        return Pair(null, raw)
-    }
+    private fun extractThinking(raw: String, thinkPrefixInjected: Boolean): Pair<String?, String> =
+        PromptComposer.extractThinking(raw, thinkPrefixInjected)
 
     /**
      * Build the full formatted prompt including system message, conversation history,
@@ -198,41 +213,19 @@ class MNNLlm private constructor(
      */
     private fun buildPrompt(userMessage: String, imagePath: String?): String {
         promptBuilder?.let { return it(history.toList(), userMessage, imagePath, systemPrompt) }
-        return buildString {
-            if (!bosToken.isNullOrEmpty()) {
-                append(bosToken).append("\n")
-            }
-        when (chatStyle) {
-            ChatStyle.QWEN_CHATML -> {
-                append("<|im_start|>system\n")
-                append(systemPrompt)
-                append("<|im_end|>\n")
-                for ((u, a) in history) {
-                    append("<|im_start|>user\n$u<|im_end|>\n")
-                    append("<|im_start|>assistant\n$a<|im_end|>\n")
-                }
-                // User turn — embed image tag immediately before text (no separator)
-                // matching MNN's official PromptUtils: "<img>path</img>text"
-                append("<|im_start|>user\n")
-                if (imagePath != null && isVisual) {
-                    append("<img>$imagePath</img>")
-                }
-                append("$userMessage<|im_end|>\n")
-                // Assistant prefix — controls thinking mode
-                append("<|im_start|>assistant\n")
-                if (supportsThinking) {
-                    if (enableThinking) {
-                        append("<think>\n")           // model will produce thoughts then </think>
-                    } else {
-                        append("<think>\n\n</think>\n") // budget-force: skip thinking entirely
-                    }
-                }
-            }
-            ChatStyle.GENERIC -> {
-                for ((u, a) in history) append("User: $u\nAssistant: $a\n")
-                append("User: $userMessage\nAssistant:")
-            }
-        }
+        val h = history.toList()
+        return when (chatStyle) {
+            ChatStyle.QWEN_CHATML -> PromptComposer.composeChatML(
+                systemPrompt = systemPrompt,
+                history = h,
+                userMessage = userMessage,
+                imagePath = imagePath,
+                isVisual = isVisual,
+                bosToken = bosToken,
+                supportsThinking = supportsThinking,
+                enableThinking = enableThinking
+            )
+            ChatStyle.GENERIC -> PromptComposer.composeGeneric(h, userMessage)
         }
     }
 
@@ -354,32 +347,64 @@ class MNNLlm private constructor(
         val thinkPrefixInjected = supportsThinking && enableThinking
         val fullPrompt = buildPrompt(userMessage, imagePath)
         nativeReset(handle)
+        currentUserTurn = userMessage
 
         val accumulated = StringBuilder()
-        // nativeResponseStreaming blocks this IO thread, calling the lambda once per
-        // decoded token. trySend is non-suspending and safe from within the callback.
-        nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
-            TokenCallback { token ->
-                accumulated.append(token)
-                // Stop C++ generation immediately if the consumer has cancelled.
-                if (trySend(token).isFailure) nativeStop(handle)
-            }
-        )
 
-        // Post-completion: extract thinking, update history, set metrics.
-        val raw = accumulated.toString().trim()
+        // IMPORTANT: MNN cannot be interrupted mid-generation from outside its own
+        // class. `Llm::generate` breaks out of its decode loop only on EOS /
+        // max_new_tokens, or mContext->status == USER_CANCEL - and `mContext` is a
+        // protected member whose only accessor, getContext(), is defined inline and
+        // therefore exported as no symbol. MNN also never inspects the output
+        // stream's state, so making the streambuf fail cannot stop it either (it only
+        // suppresses further callbacks).
+        //
+        // Consequence: a cancelled collector must NOT wait for the native call. The
+        // generation is dispatched onto [generationScope], a detached scope rather
+        // than this flow's own scope, so cancelling the collector returns immediately
+        // and the abandoned generation finishes in the background (bounded by
+        // maxNewTokens). destroy() waits for in-flight generations before freeing
+        // native memory.
+        val worker = generationScope.launch {
+            inFlightGeneration.incrementAndGet()
+            try {
+                nativeResponseStreaming(handle, fullPrompt, maxNewTokens, stopString,
+                    TokenCallback { token ->
+                        accumulated.append(token)
+                        // Non-suspending, and safe from the native callback thread.
+                        trySend(token)
+                    }
+                )
+                finalizeResponse(fullPrompt, accumulated.toString(), thinkPrefixInjected)
+                close()
+            } catch (t: Throwable) {
+                close(t)
+            } finally {
+                inFlightGeneration.decrementAndGet()
+            }
+        }
+
+        // Fires on normal completion AND on downstream cancellation. Cancelling the
+        // worker cannot interrupt the blocking JNI call, but it does drop token
+        // forwarding so we stop touching the (already closed) channel.
+        awaitClose { worker.cancel() }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Post-generation bookkeeping shared by the blocking and streaming paths: split
+     * thinking from the answer, record the turn in history, and refresh token metrics.
+     */
+    private fun finalizeResponse(fullPrompt: String, rawOutput: String, thinkPrefixInjected: Boolean) {
+        val raw = rawOutput.trim()
         val (thinking, afterThink) = extractThinking(raw, thinkPrefixInjected)
         lastThinking = thinking
         val clean = afterThink
             .let { if (stopString != null) it.removeSuffix(stopString) else it }
             .removeSuffix("<|endoftext|>")
             .trim()
-        history.add(Pair(userMessage, clean))
+        history.add(Pair(currentUserTurn, clean))
         updateExactTokenMetrics(fullPrompt, clean)
-
-        close()
-        awaitClose { nativeStop(handle) }
-    }.flowOn(Dispatchers.IO)
+    }
 
     /** Clear conversation history and KV-cache. */
     fun clearHistory() {
@@ -402,15 +427,37 @@ class MNNLlm private constructor(
         null
     }
 
-    /** Release native resources. Call when done. */
-    fun destroy() = nativeDestroy(handle)
+    /**
+     * Release native resources. Call when done.
+     *
+     * Blocks until any in-flight generation has returned, because MNN 3.6 offers no
+     * way to interrupt one and freeing the handle underneath it would be a
+     * use-after-free. An abandoned generation can therefore delay this call by up to
+     * the remaining token budget.
+     */
+    fun destroy() {
+        if (destroyed) return
+        destroyed = true
+        generationScope.cancel()
+        while (inFlightGeneration.get() > 0) {
+            try {
+                Thread.sleep(20)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+                break
+            }
+        }
+        nativeDestroy(handle)
+    }
 
     /** Metrics from the last [response] call. */
     fun lastMetrics(): Metrics = Metrics(
         prefillMs        = nativeGetPrefillMs(handle),
         decodeMs         = nativeGetDecodeMs(handle),
         promptTokens     = nativeGetPromptTokens(handle),
-        generatedTokens  = nativeGetGeneratedTokens(handle)
+        generatedTokens  = nativeGetGeneratedTokens(handle),
+        sampleMs         = nativeGetSampleMs(handle),
+        ttfaMs           = nativeGetTtfaMs(handle)
     )
 
     companion object {
@@ -480,23 +527,24 @@ class MNNLlm private constructor(
 
                 // Qwen3.5 VLM and other newer models only expose ChatML via jinja.chat_template;
                 // they have no top-level prompt_template / user_prompt_template at all.
-                val isChatML = template.contains("<|im_start|>") || template.contains("<|im_end|>") ||
-                               userTemplate.contains("<|im_start|>") || sysTemplate.contains("<|im_start|>") ||
-                               jinjaTemplate.contains("<|im_start|>")
-                chatStyle = if (isChatML) ChatStyle.QWEN_CHATML else ChatStyle.GENERIC
-                stopString = when {
-                    jinjaEos != null && jinjaEos.isNotBlank() -> jinjaEos
-                    isChatML -> "<|im_end|>"
-                    else -> null
-                }
+                chatStyle = LlmConfigAnalyzer.detectChatStyle(
+                    promptTemplate = template,
+                    userPromptTemplate = userTemplate,
+                    systemPromptTemplate = sysTemplate,
+                    jinjaChatTemplate = jinjaTemplate
+                )
+                stopString = LlmConfigAnalyzer.detectStopString(jinjaEos, chatStyle)
+
 
                 // Thinking: model advertises support via "thinking_template" field,
                 // an explicit "enable_thinking" bool, <think> in prompt_template, or
                 // <think> in the jinja chat_template (Qwen3/Qwen3.5 style).
-                supportsThinking = configJson.has("thinking_template") ||
-                                   configJson.optBoolean("enable_thinking", false) ||
-                                   template.contains("<think>") ||
-                                   jinjaTemplate.contains("<think>")
+                supportsThinking = LlmConfigAnalyzer.detectThinkingSupport(
+                    hasThinkingTemplate = configJson.has("thinking_template"),
+                    enableThinkingFlag = configJson.optBoolean("enable_thinking", false),
+                    promptTemplate = template,
+                    jinjaChatTemplate = jinjaTemplate
+                )
 
                 // Vision: true only when patchConfigDisableVisual() left is_visual=true,
                 // meaning visual.mnn was actually present on disk.
@@ -527,6 +575,8 @@ class MNNLlm private constructor(
         @JvmStatic private external fun nativeDestroy(handle: Long)
         @JvmStatic private external fun nativeGetPrefillMs(handle: Long): Long
         @JvmStatic private external fun nativeGetDecodeMs(handle: Long): Long
+        @JvmStatic private external fun nativeGetSampleMs(handle: Long): Long
+        @JvmStatic private external fun nativeGetTtfaMs(handle: Long): Long
         @JvmStatic private external fun nativeGetPromptTokens(handle: Long): Int
         @JvmStatic private external fun nativeGetGeneratedTokens(handle: Long): Int
     }

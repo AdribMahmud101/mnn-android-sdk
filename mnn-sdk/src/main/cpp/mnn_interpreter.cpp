@@ -26,7 +26,8 @@ Java_com_mnn_sdk_MNNInterpreter_nativeCreateSession(
     jint forward_type,
     jint num_threads,
     jint precision,
-    jint power_mode) {
+    jint power_mode,
+    jint memory_mode) {
     
     if (interpreter_ptr == 0) {
         LOGE("Interpreter pointer is null");
@@ -35,7 +36,8 @@ Java_com_mnn_sdk_MNNInterpreter_nativeCreateSession(
     
     auto* interpreter = reinterpret_cast<MNN::Interpreter*>(interpreter_ptr);
     
-    // Configure session
+    // Configure session. forward_type/precision/power_mode/memory_mode are cast
+    // straight from the constants in MNNConfig.kt, which mirror the MNN enums.
     MNN::ScheduleConfig config;
     config.type = static_cast<MNNForwardType>(forward_type);
     config.numThread = num_threads;
@@ -44,6 +46,7 @@ Java_com_mnn_sdk_MNNInterpreter_nativeCreateSession(
     MNN::BackendConfig backend_config;
     backend_config.precision = static_cast<MNN::BackendConfig::PrecisionMode>(precision);
     backend_config.power = static_cast<MNN::BackendConfig::PowerMode>(power_mode);
+    backend_config.memory = static_cast<MNN::BackendConfig::MemoryMode>(memory_mode);
     config.backendConfig = &backend_config;
     
     // Create session
@@ -53,8 +56,8 @@ Java_com_mnn_sdk_MNNInterpreter_nativeCreateSession(
         return 0;
     }
     
-    LOGI("Session created: forward_type=%d, threads=%d, precision=%d, power=%d",
-         forward_type, num_threads, precision, power_mode);
+    LOGI("Session created: forward_type=%d, threads=%d, precision=%d, power=%d, memory=%d",
+         forward_type, num_threads, precision, power_mode, memory_mode);
     
     return reinterpret_cast<jlong>(session);
 }

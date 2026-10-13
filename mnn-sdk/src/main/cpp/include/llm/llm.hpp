@@ -1,5 +1,8 @@
 // Minimal LLM header for JNI bridge.
-// Virtual method ORDER must match the libllm.so vtable (verified via readelf).
+// Virtual method ORDER must match the libllm.so vtable.
+// Verified against libllm.so from MNN 3.6.1 (upstream tag 3.6.1,
+// transformers/llm/engine/include/llm/llm.hpp). Upstream's virtual method order
+// is unchanged from 3.4.1, so this bridge stays ABI-compatible.
 // Vtable slot order (vptr[N]):
 //   0: ~Llm() D2  1: ~Llm() D0  2: load  3: gen_attention_mask  4: gen_position_ids
 //   5: embedding  6: sample  7: forwardRaw  8: response(vector<int>&,...)
@@ -13,6 +16,7 @@
 #include <string>
 #include <ostream>
 #include <functional>
+#include <cstdint>
 #include <MNN/expr/Expr.hpp>
 
 #ifndef MNN_PUBLIC
@@ -62,6 +66,14 @@ public:
     bool stoped();
     // Merge a JSON config string into the model config (e.g. jinja context for thinking mode).
     bool set_config(const std::string& content);
+
+    // NOTE: MNN 3.6 exposes rich per-phase timings (prefill_us / decode_us /
+    // sample_us / ttfa_us) via `Llm::getContext()`, BUT that accessor is defined
+    // *inline* in the upstream header and reads the protected `mContext` member, so
+    // libllm.so exports no symbol for it and it cannot be called from outside the
+    // class. Timings are therefore measured on our side by timestamping the first
+    // token MNN emits (see TimingStreambuf in mnn_llm.cpp). Do not try to declare
+    // getContext() here - it will not link.
 };
 
 } // namespace Transformer
